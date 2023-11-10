@@ -19,17 +19,12 @@ enum virtio_balloon_vq {
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *guest_info_vq; 
-
-	/* Waiting for host to ack the pages we released. */
-	wait_queue_head_t acked;
-
-
-	/* Synchronize access/update to this struct virtio_balloon elements */
-	struct mutex balloon_lock;
 };
 
+// IDs can't be arbitrarily chosen, for now
+// say that we are virtio-balloon
 static const struct virtio_device_id id_table[] = {
-	{ VIRTIO_ID_LLFREE_BALLOON, VIRTIO_DEV_ANY_ID },
+	{ VIRTIO_ID_BALLOON, VIRTIO_DEV_ANY_ID },
 	{ 0 },
 };
 
@@ -70,8 +65,6 @@ static int virtballoon_probe(struct virtio_device *vdev)
 		goto out;
 	}
 
-	mutex_init(&vb->balloon_lock);
-	init_waitqueue_head(&vb->acked);
 	vb->vdev = vdev;
 
 	err = init_vqs(vb);
@@ -97,7 +90,7 @@ static void remove_common(struct virtio_llfree_balloon *vb)
 	vb->vdev->config->del_vqs(vb->vdev);
 }
 
-static void virtballoon_remove(struct virtio_device *vdev)
+	static void virtballoon_remove(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb = vdev->priv;
 
