@@ -1,11 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-/*
- * Virtio balloon implementation, inspired by Dor Laor and Marcelo
- * Tosatti's implementations.
- *
- *  Copyright 2008 Rusty Russell IBM Corporation
- */
-
 #include <linux/virtio.h>
 #include <linux/virtio_balloon.h>
 #include <linux/swap.h>
@@ -21,7 +13,7 @@
 
 enum virtio_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO,
-	VIRTIO_BALLOON_VQ_MAX,
+	VIRTIO_LLFREE_BALLOON_VQ_MAX,
 };
 
 struct virtio_llfree_balloon {
@@ -41,31 +33,17 @@ static const struct virtio_device_id id_table[] = {
 	{ 0 },
 };
 
-static void balloon_ack(struct virtqueue *vq)
-{
-	struct virtio_llfree_balloon *vb = vq->vdev->priv;
-
-	wake_up(&vb->acked);
-}
-
-
 static int init_vqs(struct virtio_llfree_balloon *vb)
 {
-	struct virtqueue *vqs[VIRTIO_BALLOON_VQ_MAX];
-	vq_callback_t *callbacks[VIRTIO_BALLOON_VQ_MAX];
-	const char *names[VIRTIO_BALLOON_VQ_MAX];
+	struct virtqueue *vqs[VIRTIO_LLFREE_BALLOON_VQ_MAX];
+	vq_callback_t *callbacks[VIRTIO_LLFREE_BALLOON_VQ_MAX];
+	const char *names[VIRTIO_LLFREE_BALLOON_VQ_MAX];
 	int err;
 
-	/*
-	 * Inflateq and deflateq are used unconditionally. The names[]
-	 * will be NULL if the related feature is not enabled, which will
-	 * cause no allocation for the corresponding virtqueue in find_vqs.
-	 */
-	callbacks[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = balloon_ack;
+	callbacks[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = NULL;
 	names[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = "guest info";
 
-
-	err = virtio_find_vqs(vb->vdev, VIRTIO_BALLOON_VQ_MAX, vqs,
+	err = virtio_find_vqs(vb->vdev, VIRTIO_LLFREE_BALLOON_VQ_MAX, vqs,
 			      callbacks, names, NULL);
 	if (err)
 		return err;
@@ -119,21 +97,12 @@ static void remove_common(struct virtio_llfree_balloon *vb)
 	vb->vdev->config->del_vqs(vb->vdev);
 }
 
-static void virtballoon_changed(struct virtio_device *vdev)
-{
-}
-
 static void virtballoon_remove(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb = vdev->priv;
 
 	remove_common(vb);
 	kfree(vb);
-}
-
-static int virtballoon_validate(struct virtio_device *vdev)
-{
-	return 0;
 }
 
 static unsigned int features[] = {
@@ -145,10 +114,8 @@ static struct virtio_driver virtio_llfree_balloon_driver = {
 	.driver.name =	KBUILD_MODNAME,
 	.driver.owner =	THIS_MODULE,
 	.id_table =	id_table,
-	.validate =	virtballoon_validate,
 	.probe =	virtballoon_probe,
 	.remove =	virtballoon_remove,
-	.config_changed = virtballoon_changed,
 };
 
 module_virtio_driver(virtio_llfree_balloon_driver);
