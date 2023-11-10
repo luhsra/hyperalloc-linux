@@ -115,6 +115,14 @@ config VIRTIO_BALLOON
 
 	 If unsure, say M.
 
+config VIRTIO_LLFREE_BALLOON
+	tristate "Virtio llfree balloon driver"
+	depends on VIRTIO
+	depends on LLFREE
+	help
+	 This driver supports increasing and decreasing the amount
+	 of memory within a KVM guest, blazingly fast.
+
 config VIRTIO_MEM
 	tristate "Virtio mem driver"
 	depends on X86_64 || ARM64
