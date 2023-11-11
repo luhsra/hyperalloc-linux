@@ -1,3 +1,5 @@
+#include "asm/stat.h"
+#include "linux/virtio_types.h"
 #include <linux/virtio.h>
 #include <linux/virtio_balloon.h>
 #include <linux/swap.h>
@@ -19,7 +21,23 @@ enum virtio_balloon_vq {
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *guest_info_vq; 
+	__virtio32 test_data[32];
 };
+
+static void noinline virtio_llfree_test(struct virtio_llfree_balloon *vb, struct virtqueue *vq) 
+{
+	struct scatterlist sg;
+
+	for(uint32_t i = 0; i < 32; i++){
+		vb->test_data[i] = i;
+	}
+
+	sg_init_one(&sg, vb->test_data, sizeof(vb->test_data[0]) * 32);
+
+	/* We should always be able to add one buffer to an empty queue. */
+	virtqueue_add_outbuf(vq, &sg, 1, vb, GFP_KERNEL);
+	virtqueue_kick(vq);
+}
 
 // IDs can't be arbitrarily chosen, for now
 // say that we are virtio-balloon
@@ -73,6 +91,7 @@ static int virtballoon_probe(struct virtio_device *vdev)
 
 	virtio_device_ready(vdev);
 
+	virtio_llfree_test(vb, vb->guest_info_vq);
 	return 0;
 
 out_free_vb:
