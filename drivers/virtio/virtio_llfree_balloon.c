@@ -1,5 +1,7 @@
 #include "asm/stat.h"
+#include "linux/mmzone.h"
 #include "linux/virtio_types.h"
+#include "llfree.h"
 #include <linux/virtio.h>
 #include <linux/virtio_balloon.h>
 #include <linux/swap.h>
@@ -18,25 +20,42 @@ enum virtio_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_VQ_MAX,
 };
 
+struct llfree_guest_info {
+	void *tree_gpa;
+	void *children_gpa;
+	void *zone_normal;
+	u64 tree_len;
+	u64 children_len;
+	u64 test_data;
+};
+
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *guest_info_vq; 
 	__virtio32 test_data[32];
+	struct llfree_guest_info guest_info;
 };
 
-static void noinline virtio_llfree_test(struct virtio_llfree_balloon *vb, struct virtqueue *vq) 
+static void noinline virtio_llfree_send_guest_info(struct virtio_llfree_balloon *vb) 
 {
+	// llfree_get_guest_info(zone_normal->llfree, (void*) &guest_info);
 	struct scatterlist sg;
+	struct pglist_data *pgdat = first_online_pgdat();
+	struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
 
-	for(uint32_t i = 0; i < 32; i++){
-		vb->test_data[i] = i;
-	}
+	vb->guest_info.children_gpa = (void*) 0x00;
+	vb->guest_info.children_len = 10;
+	vb->guest_info.tree_gpa = (void*) 0x7;
+	vb->guest_info.tree_len = 15;
+	vb->guest_info.zone_normal = zone_normal;
+	vb->guest_info.test_data = 5;
 
-	sg_init_one(&sg, vb->test_data, sizeof(vb->test_data[0]) * 32);
+
+	sg_init_one(&sg, &vb->guest_info, sizeof(struct llfree_guest_info));
 
 	/* We should always be able to add one buffer to an empty queue. */
-	virtqueue_add_outbuf(vq, &sg, 1, vb, GFP_KERNEL);
-	virtqueue_kick(vq);
+	virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
+	virtqueue_kick(vb->guest_info_vq);
 }
 
 // IDs can't be arbitrarily chosen, for now
@@ -66,7 +85,7 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 	return 0;
 }
 
-static int virtballoon_probe(struct virtio_device *vdev)
+static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb;
 	int err;
@@ -91,7 +110,7 @@ static int virtballoon_probe(struct virtio_device *vdev)
 
 	virtio_device_ready(vdev);
 
-	virtio_llfree_test(vb, vb->guest_info_vq);
+	virtio_llfree_send_guest_info(vb);
 	return 0;
 
 out_free_vb:
@@ -114,7 +133,7 @@ static void remove_common(struct virtio_llfree_balloon *vb)
 	struct virtio_llfree_balloon *vb = vdev->priv;
 
 	remove_common(vb);
-	kfree(vb);
+kfree(vb);
 }
 
 static unsigned int features[] = {
@@ -126,7 +145,7 @@ static struct virtio_driver virtio_llfree_balloon_driver = {
 	.driver.name =	KBUILD_MODNAME,
 	.driver.owner =	THIS_MODULE,
 	.id_table =	id_table,
-	.probe =	virtballoon_probe,
+	.probe =	virtio_llfree_balloon_probe,
 	.remove =	virtballoon_remove,
 };
 
