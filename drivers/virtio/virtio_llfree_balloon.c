@@ -23,7 +23,7 @@ enum virtio_balloon_vq {
 struct llfree_guest_info {
 	void *tree_gpa;
 	void *children_gpa;
-	void *zone_normal;
+	void *zone_normal_free_pages;
 	u64 tree_len;
 	u64 children_len;
 	u64 test_data;
@@ -34,7 +34,10 @@ struct virtio_llfree_balloon {
 	struct virtqueue *guest_info_vq; 
 	__virtio32 test_data[32];
 	struct llfree_guest_info guest_info;
+	uint64_t *virt_test_data;
 };
+
+u64 *virt_test_data;
 
 static void noinline virtio_llfree_send_guest_info(struct virtio_llfree_balloon *vb) 
 {
@@ -47,12 +50,12 @@ static void noinline virtio_llfree_send_guest_info(struct virtio_llfree_balloon 
 	vb->guest_info.children_len = 10;
 	vb->guest_info.tree_gpa = (void*) 0x7;
 	vb->guest_info.tree_len = 15;
-	vb->guest_info.zone_normal = zone_normal;
-	vb->guest_info.test_data = 5;
-
-
+	vb->guest_info.zone_normal_free_pages = (void*) &zone_normal->vm_stat[NR_FREE_PAGES];
+	
+	virt_test_data = kzalloc(sizeof(uint64_t), GFP_KERNEL);
+	vb->guest_info.test_data = virt_to_phys(virt_test_data);
 	sg_init_one(&sg, &vb->guest_info, sizeof(struct llfree_guest_info));
-
+	*virt_test_data = 5;
 	/* We should always be able to add one buffer to an empty queue. */
 	virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
 	virtqueue_kick(vb->guest_info_vq);
@@ -65,6 +68,10 @@ static const struct virtio_device_id id_table[] = {
 	{ 0 },
 };
 
+static void noinline virtio_llfree_callback(struct virtqueue *vq) {
+	
+}
+
 static int init_vqs(struct virtio_llfree_balloon *vb)
 {
 	struct virtqueue *vqs[VIRTIO_LLFREE_BALLOON_VQ_MAX];
@@ -72,7 +79,7 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 	const char *names[VIRTIO_LLFREE_BALLOON_VQ_MAX];
 	int err;
 
-	callbacks[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = NULL;
+	callbacks[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = virtio_llfree_callback;
 	names[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = "guest info";
 
 	err = virtio_find_vqs(vb->vdev, VIRTIO_LLFREE_BALLOON_VQ_MAX, vqs,
@@ -128,12 +135,12 @@ static void remove_common(struct virtio_llfree_balloon *vb)
 	vb->vdev->config->del_vqs(vb->vdev);
 }
 
-	static void virtballoon_remove(struct virtio_device *vdev)
+static void virtio_llfree_remove(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb = vdev->priv;
 
 	remove_common(vb);
-kfree(vb);
+	kfree(vb);
 }
 
 static unsigned int features[] = {
@@ -146,7 +153,7 @@ static struct virtio_driver virtio_llfree_balloon_driver = {
 	.driver.owner =	THIS_MODULE,
 	.id_table =	id_table,
 	.probe =	virtio_llfree_balloon_probe,
-	.remove =	virtballoon_remove,
+	.remove =	virtio_llfree_remove,
 };
 
 module_virtio_driver(virtio_llfree_balloon_driver);
