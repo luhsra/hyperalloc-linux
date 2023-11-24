@@ -1,3 +1,4 @@
+#include "asm/io.h"
 #include "asm/stat.h"
 #include "linux/mmzone.h"
 #include "linux/virtio_types.h"
@@ -15,48 +16,69 @@
 #include <linux/mm.h>
 #include <linux/page_reporting.h>
 
+#include "llfree_alloc.h"
+
 enum virtio_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO,
 	VIRTIO_LLFREE_BALLOON_VQ_MAX,
 };
 
-struct llfree_guest_info {
-	void *tree_gpa;
-	void *children_gpa;
-	void *zone_normal_free_pages;
-	u64 tree_len;
-	u64 children_len;
-	u64 test_data;
+struct guest_info {
+	llfree_guest_info_t llfree_info;
+	uint64_t *zone_normal_free_pages;
 };
 
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *guest_info_vq; 
 	__virtio32 test_data[32];
-	struct llfree_guest_info guest_info;
+	struct guest_info guest_info;
 	uint64_t *virt_test_data;
 };
 
-u64 *virt_test_data;
+// u64 *virt_test_data;
 
-static void noinline virtio_llfree_send_guest_info(struct virtio_llfree_balloon *vb) 
-{
-	// llfree_get_guest_info(zone_normal->llfree, (void*) &guest_info);
+// static void noinline virtio_llfree_send_test_info(struct virtio_llfree_balloon *vb) 
+// {
+// 	// llfree_get_guest_info(zone_normal->llfree, (void*) &guest_info);
+// 	struct scatterlist sg;
+// 	struct pglist_data *pgdat = first_online_pgdat();
+// 	struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
+//
+// 	vb->guest_info.children_gpa = (void*) 0x00;
+// 	vb->guest_info.children_len = 10;
+// 	vb->guest_info.tree_gpa = (void*) 0x7;
+// 	vb->guest_info.tree_len = 15;
+// 	vb->guest_info.zone_normal_free_pages = (void*) &zone_normal->vm_stat[NR_FREE_PAGES];
+// 	
+// 	virt_test_data = kzalloc(sizeof(uint64_t), GFP_KERNEL);
+// 	vb->guest_info.test_data = virt_to_phys(virt_test_data);
+// 	sg_init_one(&sg, &vb->guest_info, sizeof(struct llfree_guest_info));
+// 	*virt_test_data = 5;
+// 	/* We should always be able to add one buffer to an empty queue. */
+// 	virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
+// 	virtqueue_kick(vb->guest_info_vq);
+// }
+
+static void noinline virtio_llfree_translate_guest_info_ptr(struct guest_info *guest_info) {
+	// guest_info->llfree_info.llfree_meta = (void *) virt_to_phys(guest_info->llfree_info.llfree_meta);
+	guest_info->llfree_info.llfree_lower_fields = (void *) virt_to_phys(guest_info->llfree_info.llfree_lower_fields);
+	guest_info->llfree_info.llfree_lower_children = (void *) virt_to_phys(guest_info->llfree_info.llfree_lower_children);
+	guest_info->llfree_info.llfree_trees = (void *) virt_to_phys(guest_info->llfree_info.llfree_trees);
+
+	guest_info->zone_normal_free_pages = (uint64_t *) virt_to_phys(guest_info->zone_normal_free_pages);
+}
+
+static void noinline virtio_llfree_send_guest_info(struct virtio_llfree_balloon *vb) {
 	struct scatterlist sg;
 	struct pglist_data *pgdat = first_online_pgdat();
 	struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
 
-	vb->guest_info.children_gpa = (void*) 0x00;
-	vb->guest_info.children_len = 10;
-	vb->guest_info.tree_gpa = (void*) 0x7;
-	vb->guest_info.tree_len = 15;
-	vb->guest_info.zone_normal_free_pages = (void*) &zone_normal->vm_stat[NR_FREE_PAGES];
-	
-	virt_test_data = kzalloc(sizeof(uint64_t), GFP_KERNEL);
-	vb->guest_info.test_data = virt_to_phys(virt_test_data);
-	sg_init_one(&sg, &vb->guest_info, sizeof(struct llfree_guest_info));
-	*virt_test_data = 5;
-	/* We should always be able to add one buffer to an empty queue. */
+	vb->guest_info.zone_normal_free_pages = (uint64_t *) &zone_normal->vm_stat[NR_FREE_PAGES];
+	llfree_get_guest_info(zone_normal->llfree, &vb->guest_info.llfree_info);
+	virtio_llfree_translate_guest_info_ptr(&vb->guest_info);
+
+	sg_init_one(&sg, &vb->guest_info, sizeof(struct guest_info));
 	virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
 	virtqueue_kick(vb->guest_info_vq);
 }
@@ -117,6 +139,7 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 
 	virtio_device_ready(vdev);
 
+	// virtio_llfree_send_test_info(vb);
 	virtio_llfree_send_guest_info(vb);
 	return 0;
 
