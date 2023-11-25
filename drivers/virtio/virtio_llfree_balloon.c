@@ -32,11 +32,11 @@ struct llfree_vq_buffer {
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *guest_info_vq; 
-	qemu_info_t qemu_info;
+	llfree_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
 };
 
-static void noinline virtio_llfree_send_qemu_info(struct virtio_llfree_balloon *vb) {
+static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon *vb) {
 	struct scatterlist sg;
 	struct pglist_data *pgdat = first_online_pgdat();
 	struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
@@ -105,7 +105,7 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 		goto out_free_vb;
 
 	virtio_device_ready(vdev);
-	virtio_llfree_send_qemu_info(vb);
+	virtio_llfree_send_llfree_info(vb);
 	return 0;
 
 out_free_vb:

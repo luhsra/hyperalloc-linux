@@ -4,14 +4,14 @@
 #include <linux/slab.h> 
 #include "asm/io.h"
 
-typedef struct qemu_info_buffer{
+typedef struct llfree_info_buffer{
 	llfree_t qemu_llfree;
 	_Atomic(int64_t) zone_normal_free_pages;
-} qemu_info_buffer_t;
+} llfree_info_buffer_t;
 
 void llfree_create_buffer(void **buffer, size_t *buffer_len) {
-	*buffer = (qemu_info_buffer_t *) kzalloc(sizeof(qemu_info_buffer_t), GFP_KERNEL);
-	*buffer_len = sizeof(qemu_info_buffer_t);
+	*buffer = (llfree_info_buffer_t *) kzalloc(sizeof(llfree_info_buffer_t), GFP_KERNEL);
+	*buffer_len = sizeof(llfree_info_buffer_t);
 }
 
 void llfree_translate_to_gpa(llfree_t *qemu_llfree) {
@@ -24,12 +24,12 @@ void llfree_translate_to_gpa(llfree_t *qemu_llfree) {
 	qemu_llfree->trees = (_Atomic(tree_t)* ) virt_to_phys(qemu_llfree->trees);
 }
 
-void llfree_copy_into_buffer(qemu_info_t *qemu_info, void *buffer) {
+void llfree_copy_into_buffer(llfree_info_t *qemu_info, void *buffer) {
 	if (!buffer) {
 		return;
 	}
 
-	qemu_info_buffer_t *qemu_info_buffer = (qemu_info_buffer_t *) buffer;
+	llfree_info_buffer_t *qemu_info_buffer = (llfree_info_buffer_t *) buffer;
 	qemu_info_buffer->qemu_llfree = *qemu_info->qemu_llfree;
 	qemu_info_buffer->qemu_llfree.meta = NULL;
 	qemu_info_buffer->qemu_llfree.local = NULL;
