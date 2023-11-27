@@ -18,6 +18,7 @@
 
 #include "llfree_alloc.h"
 #include "llfree_qemu.h"
+#include "llfree_qemu_test.h"
 
 enum virtio_llfree_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO,
@@ -50,6 +51,27 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 	virtqueue_kick(vb->guest_info_vq);
 }
 
+static void virtio_llfree_config_changed(struct virtio_device *vdev) {
+	struct virtio_llfree_balloon *vb;
+	vb = (struct virtio_llfree_balloon *) vdev->priv;
+	llfree_inspect_llfree(vb->qemu_info.qemu_llfree);
+}
+
+// static void noinline virtio_llfree_send_test_llfree_info(struct virtio_llfree_balloon *vb) {
+// 	struct scatterlist sg;
+// 	struct pglist_data *pgdat = first_online_pgdat();
+// 	struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
+//
+// 	vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone_normal->vm_stat[NR_FREE_PAGES];
+// 	// vb->qemu_info.qemu_llfree = (llfree_t *) zone_normal->llfree;
+// 	vb->qemu_info.qemu_llfree = llfree_create_test_llfree();
+// 	llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
+//
+// 	sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
+// 	virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
+// 	virtqueue_kick(vb->guest_info_vq);
+// }
+
 // IDs can't be arbitrarily chosen, for now
 // say that we are virtio-balloon
 static const struct virtio_device_id id_table[] = {
@@ -77,6 +99,7 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 	vb->guest_info_vq = vqs[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO];
 	return 0;
 }
+
 
 static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 {
@@ -140,6 +163,7 @@ static struct virtio_driver virtio_llfree_balloon_driver = {
 	.id_table =	id_table,
 	.probe =	virtio_llfree_balloon_probe,
 	.remove =	virtio_llfree_remove,
+	.config_changed = virtio_llfree_config_changed
 };
 
 module_virtio_driver(virtio_llfree_balloon_driver);
