@@ -39,16 +39,17 @@ struct virtio_llfree_balloon {
 
 static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon *vb) {
 	struct scatterlist sg;
-	struct pglist_data *pgdat = first_online_pgdat();
-	struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
+	struct zone *zone;
 
-	vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone_normal->vm_stat[NR_FREE_PAGES];
-	vb->qemu_info.qemu_llfree = (llfree_t *) zone_normal->llfree;
-	llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
+	for_each_populated_zone(zone) {
+		vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone->vm_stat[NR_FREE_PAGES];
+		vb->qemu_info.qemu_llfree = (llfree_t *) zone->llfree;
+		llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
 
-	sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
-	virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
-	virtqueue_kick(vb->guest_info_vq);
+		sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
+		virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
+		virtqueue_kick(vb->guest_info_vq);
+	}
 }
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
