@@ -1,6 +1,7 @@
 #include "asm/io.h"
 #include "asm/stat.h"
 #include "linux/mmzone.h"
+#include "linux/types.h"
 #include "linux/virtio_types.h"
 #include "llfree.h"
 #include <linux/virtio.h>
@@ -34,12 +35,21 @@ struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *guest_info_vq; 
 	llfree_info_t qemu_info;
+	void *test;
 	struct llfree_vq_buffer vq_buffer;
 };
 
 static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon *vb) {
 	struct scatterlist sg;
 	struct zone *zone;
+
+	// struct pglist_data *pgdat = first_online_pgdat();
+	// struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
+	// int cpu = get_cpu();
+	// llfree_result_t res = llfree_get(zone_normal->llfree, cpu, 9);
+	// vb->test = (void*) res.val;
+	// res = llfree_put(zone_normal->llfree, cpu, (uint64_t) vb->test, 9);
+	//
 
 	for_each_populated_zone(zone) {
 		vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone->vm_stat[NR_FREE_PAGES];
@@ -53,9 +63,12 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 }
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
-	struct virtio_llfree_balloon *vb;
-	vb = (struct virtio_llfree_balloon *) vdev->priv;
-	llfree_inspect_llfree(vb->qemu_info.qemu_llfree);
+// 	// struct virtio_llfree_balloon *vb;
+// 	void *test_virt = NULL;
+// 	// vb = (struct virtio_llfree_balloon *) vdev->priv;
+// 	// llfree_inspect_llfree(vb->qemu_info.qemu_llfree);
+// 	test_virt = phys_to_virt((phys_addr_t) 0x100000 << 12);
+// 	*(uint64_t *) test_virt = 0xff;
 }
 
 // static void noinline virtio_llfree_send_test_llfree_info(struct virtio_llfree_balloon *vb) {

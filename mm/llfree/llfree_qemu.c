@@ -12,11 +12,17 @@ typedef struct llfree_info_buffer{
 
 void noinline llfree_create_buffer(void **buffer, size_t *buffer_len) {
 	*buffer = (llfree_info_buffer_t *) kzalloc(sizeof(llfree_info_buffer_t), GFP_KERNEL);
+	if (!buffer) {
+		pr_err("llfree_create_buffer: could not allocate memory for llfree buffer\n");
+		return;
+	}
+
 	*buffer_len = sizeof(llfree_info_buffer_t);
 }
 
 void noinline llfree_copy_into_buffer(llfree_info_t *llfree_info, void *buffer) {
 	if (!buffer) {
+		pr_err("llfree_copy_into_buffer: buffer is null pointer\n");
 		return;
 	}
 
