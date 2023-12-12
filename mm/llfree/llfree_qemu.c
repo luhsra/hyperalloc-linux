@@ -34,7 +34,8 @@ void noinline llfree_copy_into_buffer(llfree_info_t *llfree_info, void *buffer) 
 	qemu_llfree = &llfree_info_buffer->qemu_llfree;
 	*qemu_llfree = *llfree_info->qemu_llfree;
 	qemu_llfree->meta = NULL;
-	qemu_llfree->local = NULL;
+	// qemu_llfree->local = NULL;
+	qemu_llfree->local = (struct local *) virt_to_phys(qemu_llfree->local);
 	llfree_info_buffer->zone_normal_free_pages = llfree_info->zone_normal_free_pages;
 	
 	// translating gva to gpa
