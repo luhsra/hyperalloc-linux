@@ -32,7 +32,7 @@
 
 struct virtio_llfree_balloon_config {
 	/* Number of pages host wants Guest to shrink the pagecache. */
-	uint32_t shrink_pagecache_num_pages;
+	__le32 shrink_pagecache_num_pages;
 };
 
 #endif /* _LINUX_VIRTIO_LLFREE_BALLOON_H */

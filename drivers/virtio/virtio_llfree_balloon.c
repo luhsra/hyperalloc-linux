@@ -2,10 +2,11 @@
 #include "asm/stat.h"
 #include "linux/mmzone.h"
 #include "linux/types.h"
+#include "linux/virtio_config.h"
 #include "linux/virtio_types.h"
 #include "llfree.h"
 #include <linux/virtio.h>
-#include <linux/virtio_balloon.h>
+#include <linux/virtio_llfree_balloon.h>
 #include <linux/swap.h>
 #include <linux/workqueue.h>
 #include <linux/delay.h>
@@ -21,8 +22,11 @@
 #include "llfree_qemu.h"
 #include "llfree_qemu_test.h"
 
+extern uint32_t shrink_pagecache_for_reclaim(uint32_t nr_to_reclaim);
+
 enum virtio_llfree_balloon_vq {
-	VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO,
+	VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ,
+	VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ,
 	VIRTIO_LLFREE_BALLOON_VQ_MAX,
 };
 
@@ -31,11 +35,26 @@ struct llfree_vq_buffer {
 	size_t len;
 };
 
+enum RequestType {
+    SCHEDULE_LLFREE_BALLOON_UPDATE,
+};
+
+typedef enum RequestType RequestType;
+
+struct LLFreeBalloonRequest {
+    RequestType req;
+};
+
+typedef struct LLFreeBalloonRequest LLFreeBalloonRequest;
+
+
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
-	struct virtqueue *guest_info_vq; 
+	struct virtqueue *llfree_info_vq; 
+	struct virtqueue *llfree_request_vq;
+	struct work_struct shrink_pagecache_work;
+	LLFreeBalloonRequest guest_req;
 	llfree_info_t qemu_info;
-	void *test;
 	struct llfree_vq_buffer vq_buffer;
 };
 
@@ -57,34 +76,46 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 		llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
 
 		sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
-		virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
-		virtqueue_kick(vb->guest_info_vq);
+		virtqueue_add_outbuf(vb->llfree_info_vq, &sg, 1, vb, GFP_KERNEL);
+		virtqueue_kick(vb->llfree_info_vq);
 	}
 }
 
-static void virtio_llfree_config_changed(struct virtio_device *vdev) {
-// 	// struct virtio_llfree_balloon *vb;
-// 	void *test_virt = NULL;
-// 	// vb = (struct virtio_llfree_balloon *) vdev->priv;
-// 	// llfree_inspect_llfree(vb->qemu_info.qemu_llfree);
-// 	test_virt = phys_to_virt((phys_addr_t) 0x100000 << 12);
-// 	*(uint64_t *) test_virt = 0xff;
+static void shrink_pagecache_func(struct work_struct *work) {
+		struct virtio_llfree_balloon *vb;
+		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages;
+		struct scatterlist sg;
+
+		vb = container_of(work, struct virtio_llfree_balloon, shrink_pagecache_work);
+
+		virtio_cread_le(vb->vdev, struct virtio_llfree_balloon_config, 
+		                shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
+
+		reclaimed_nr_pages = shrink_pagecache_for_reclaim(shrink_pagecache_num_pages);
+
+		shrink_pagecache_num_pages = 0;
+		virtio_cwrite_le(vb->vdev, struct virtio_llfree_balloon_config, 
+		                 shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
+
+		vb->guest_req.req = SCHEDULE_LLFREE_BALLOON_UPDATE;
+		sg_init_one(&sg, &vb->guest_req, sizeof(LLFreeBalloonRequest));
+		virtqueue_add_outbuf(vb->llfree_request_vq, &sg, 1, vb, GFP_KERNEL);
+		virtqueue_kick(vb->llfree_request_vq);
 }
 
-// static void noinline virtio_llfree_send_test_llfree_info(struct virtio_llfree_balloon *vb) {
-// 	struct scatterlist sg;
-// 	struct pglist_data *pgdat = first_online_pgdat();
-// 	struct zone *zone_normal = &pgdat->node_zones[ZONE_NORMAL];
-//
-// 	vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone_normal->vm_stat[NR_FREE_PAGES];
-// 	// vb->qemu_info.qemu_llfree = (llfree_t *) zone_normal->llfree;
-// 	vb->qemu_info.qemu_llfree = llfree_create_test_llfree();
-// 	llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
-//
-// 	sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
-// 	virtqueue_add_outbuf(vb->guest_info_vq, &sg, 1, vb, GFP_KERNEL);
-// 	virtqueue_kick(vb->guest_info_vq);
-// }
+static void virtio_llfree_config_changed(struct virtio_device *vdev) {
+		struct virtio_llfree_balloon *vb;
+		vb = (struct virtio_llfree_balloon *) vdev->priv;
+
+		// dispatch
+		uint32_t shrink_pagecache_num_pages;
+		virtio_cread_le(vdev, struct virtio_llfree_balloon_config, 
+		                shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
+
+		if(shrink_pagecache_num_pages > 0) {
+				queue_work(system_freezable_wq, &vb->shrink_pagecache_work);
+		}
+}
 
 // IDs can't be arbitrarily chosen, for now
 // say that we are virtio-balloon
@@ -104,13 +135,17 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 	const char *names[VIRTIO_LLFREE_BALLOON_VQ_MAX];
 	int err;
 
-	callbacks[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = virtio_llfree_callback;
-	names[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO] = "guest info";
+	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = virtio_llfree_callback;
+	names[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = "llfree info";
+	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = virtio_llfree_callback;
+	names[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = "llfree requests";
 	err = virtio_find_vqs(vb->vdev, VIRTIO_LLFREE_BALLOON_VQ_MAX, vqs,
 			      callbacks, names, NULL);
 	if (err)
 		return err;
-	vb->guest_info_vq = vqs[VIRTIO_LLFREE_BALLOON_VQ_GUEST_INFO];
+
+	vb->llfree_info_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ];
+	vb->llfree_request_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ];
 	return 0;
 }
 
@@ -129,6 +164,8 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 		err = -ENOMEM;
 		goto out;
 	}
+
+	INIT_WORK(&vb->shrink_pagecache_work, shrink_pagecache_func);
 	
 	llfree_create_buffer(&vb->vq_buffer.buf, &vb->vq_buffer.len);
 	if(!vb->vq_buffer.buf) {

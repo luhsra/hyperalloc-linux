@@ -10,7 +10,6 @@
  *  Multiqueue VM started 5.8.00, Rik van Riel.
  */
 #include "linux/export.h"
-#include <stdint.h>
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/mm.h>
