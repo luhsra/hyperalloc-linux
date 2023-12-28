@@ -56,6 +56,7 @@ struct virtio_llfree_balloon {
 	LLFreeBalloonRequest guest_req;
 	llfree_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
+	wait_queue_head_t acked;
 };
 
 static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon *vb) {
@@ -83,7 +84,7 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 
 static void shrink_pagecache_func(struct work_struct *work) {
 		struct virtio_llfree_balloon *vb;
-		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages;
+		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages, len;
 		struct scatterlist sg;
 
 		vb = container_of(work, struct virtio_llfree_balloon, shrink_pagecache_work);
@@ -101,6 +102,7 @@ static void shrink_pagecache_func(struct work_struct *work) {
 		sg_init_one(&sg, &vb->guest_req, sizeof(LLFreeBalloonRequest));
 		virtqueue_add_outbuf(vb->llfree_request_vq, &sg, 1, vb, GFP_KERNEL);
 		virtqueue_kick(vb->llfree_request_vq);
+		wait_event(vb->acked, virtqueue_get_buf(vb->llfree_request_vq, &len));
 }
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
@@ -128,6 +130,13 @@ static void noinline virtio_llfree_callback(struct virtqueue *vq) {
 	
 }
 
+static void balloon_ack(struct virtqueue *vq)
+{
+	struct virtio_llfree_balloon *vb = vq->vdev->priv;
+
+	wake_up(&vb->acked);
+}
+
 static int init_vqs(struct virtio_llfree_balloon *vb)
 {
 	struct virtqueue *vqs[VIRTIO_LLFREE_BALLOON_VQ_MAX];
@@ -137,7 +146,7 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 
 	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = virtio_llfree_callback;
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = "llfree info";
-	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = virtio_llfree_callback;
+	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = balloon_ack;
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = "llfree requests";
 	err = virtio_find_vqs(vb->vdev, VIRTIO_LLFREE_BALLOON_VQ_MAX, vqs,
 			      callbacks, names, NULL);
@@ -166,6 +175,8 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 	}
 
 	INIT_WORK(&vb->shrink_pagecache_work, shrink_pagecache_func);
+
+	init_waitqueue_head(&vb->acked);
 	
 	llfree_create_buffer(&vb->vq_buffer.buf, &vb->vq_buffer.len);
 	if(!vb->vq_buffer.buf) {
