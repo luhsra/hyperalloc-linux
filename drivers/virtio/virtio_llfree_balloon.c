@@ -75,10 +75,20 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 	}
 }
 
+static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb, RequestType llfree_request) {
+		struct scatterlist sg;
+		uint32_t len;
+
+		vb->guest_req.req = llfree_request;
+		sg_init_one(&sg, &vb->guest_req, sizeof(LLFreeBalloonRequest));
+		virtqueue_add_outbuf(vb->llfree_request_vq, &sg, 1, vb, GFP_KERNEL);
+		virtqueue_kick(vb->llfree_request_vq);
+		wait_event(vb->acked, virtqueue_get_buf(vb->llfree_request_vq, &len));
+}
+
 static void shrink_pagecache_func(struct work_struct *work) {
 		struct virtio_llfree_balloon *vb;
-		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages, len;
-		struct scatterlist sg;
+		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages;
 
 		vb = container_of(work, struct virtio_llfree_balloon, shrink_pagecache_work);
 
@@ -91,11 +101,7 @@ static void shrink_pagecache_func(struct work_struct *work) {
 		virtio_cwrite_le(vb->vdev, struct virtio_llfree_balloon_config, 
 		                 shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
 
-		vb->guest_req.req = SCHEDULE_LLFREE_BALLOON_UPDATE;
-		sg_init_one(&sg, &vb->guest_req, sizeof(LLFreeBalloonRequest));
-		virtqueue_add_outbuf(vb->llfree_request_vq, &sg, 1, vb, GFP_KERNEL);
-		virtqueue_kick(vb->llfree_request_vq);
-		wait_event(vb->acked, virtqueue_get_buf(vb->llfree_request_vq, &len));
+		virtio_llfree_send_request(vb, SCHEDULE_LLFREE_BALLOON_UPDATE);
 }
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
