@@ -15,6 +15,7 @@
  *          (lots of bits borrowed from Ingo Molnar & Andrew Morton)
  */
 
+#include "llfree.h"
 #include <llfree_alloc.h>
 #include <size_counters.h>
 
@@ -86,6 +87,8 @@
 #include "shuffle.h"
 #include "page_reporting.h"
 #include "swap.h"
+
+extern void noinline virtio_llfree_auto_deflate(void);
 
 /* Free Page Internal flags: for internal, non-pcp variants of free_pages(). */
 typedef int __bitwise fpi_t;
@@ -4118,7 +4121,16 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 	llf.movable = gfp_flags & __GFP_MOVABLE ? 1 : 0;
 
 	cpu = get_cpu();
-	res = llfree_get(zone->llfree, cpu, llf);
+
+	for(uint32_t i = 0; i < 2; i++) {
+		res = llfree_get(zone->llfree, cpu, llf);
+
+		if(res.val == LLFREE_ERR_MEMORY) {
+			virtio_llfree_auto_deflate();
+			continue;
+		}
+		break;
+	}
 
 	if (!llfree_ok(res)) {
 		put_cpu();

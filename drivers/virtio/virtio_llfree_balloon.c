@@ -1,6 +1,7 @@
 #include "asm/io.h"
 #include "asm/stat.h"
 #include "linux/mmzone.h"
+#include "linux/spinlock.h"
 #include "linux/types.h"
 #include "linux/virtio_config.h"
 #include "linux/virtio_types.h"
@@ -37,6 +38,7 @@ struct llfree_vq_buffer {
 
 enum RequestType {
     SCHEDULE_LLFREE_BALLOON_UPDATE,
+    AUTO_DEFLATE,
 };
 
 typedef enum RequestType RequestType;
@@ -53,11 +55,14 @@ struct virtio_llfree_balloon {
 	struct virtqueue *llfree_info_vq; 
 	struct virtqueue *llfree_request_vq;
 	struct work_struct shrink_pagecache_work;
+	spinlock_t lock_auto_deflate;
 	LLFreeBalloonRequest guest_req;
 	llfree_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
 	wait_queue_head_t acked;
 };
+
+struct virtio_llfree_balloon *vb_llfree;
 
 static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon *vb) {
 	struct scatterlist sg;
@@ -85,6 +90,14 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 		virtqueue_kick(vb->llfree_request_vq);
 		wait_event(vb->acked, virtqueue_get_buf(vb->llfree_request_vq, &len));
 }
+
+void noinline virtio_llfree_auto_deflate(void) {
+	//spinloc
+	spin_lock(&vb_llfree->lock_auto_deflate);
+	virtio_llfree_send_request(vb_llfree, AUTO_DEFLATE);
+	spin_unlock(&vb_llfree->lock_auto_deflate);
+}
+EXPORT_SYMBOL(virtio_llfree_auto_deflate);
 
 static void shrink_pagecache_func(struct work_struct *work) {
 		struct virtio_llfree_balloon *vb;
@@ -188,6 +201,9 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 	if (err)
 		goto out_free_vb;
 
+	vb_llfree = vb;
+	spin_lock_init(&vb->lock_auto_deflate);
+	
 	virtio_device_ready(vdev);
 	virtio_llfree_send_llfree_info(vb);
 	return 0;
