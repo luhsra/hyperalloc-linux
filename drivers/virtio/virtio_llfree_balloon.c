@@ -1,7 +1,6 @@
 #include "asm/io.h"
 #include "asm/stat.h"
 #include "linux/mmzone.h"
-#include "linux/mutex.h"
 #include "linux/spinlock.h"
 #include "linux/types.h"
 #include "linux/virtio_config.h"
@@ -57,7 +56,6 @@ struct virtio_llfree_balloon {
 	struct virtqueue *llfree_request_vq;
 	struct work_struct shrink_pagecache_work;
 	spinlock_t lock_auto_deflate;
-	struct mutex mutex_auto_deflate;
 	LLFreeBalloonRequest guest_req;
 	llfree_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
@@ -70,7 +68,10 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 	struct scatterlist sg;
 	struct zone *zone;
 
-	for_each_populated_zone(zone) {
+	struct pglist_data *pgdat = first_online_pgdat();
+	zone = &pgdat->node_zones[ZONE_NORMAL];
+
+	// for_each_populated_zone(zone) {
 		vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone->vm_stat[NR_FREE_PAGES];
 		vb->qemu_info.qemu_llfree = (llfree_t *) zone->llfree;
 		vb->qemu_info.num_pagecache_reclaimable_pages = (_Atomic(int64_t) *) &zone->zone_pgdat->vm_stat[NR_FILE_PAGES];
@@ -79,7 +80,7 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 		sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
 		virtqueue_add_outbuf(vb->llfree_info_vq, &sg, 1, vb, GFP_KERNEL);
 		virtqueue_kick(vb->llfree_info_vq);
-	}
+	// }
 }
 
 static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb, RequestType llfree_request) {
@@ -95,19 +96,9 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 
 void noinline virtio_llfree_auto_deflate(void) {
 	//spinloc
-	// spin_lock(&vb_llfree->lock_auto_deflate);
-	int ret;
-	ret = mutex_trylock(&vb_llfree->mutex_auto_deflate);
-	if(ret == 0) {
-		pr_err("llfree thread %u: mutex auto_deflate contended\n", current->pid);
-		mutex_lock(&vb_llfree->mutex_auto_deflate);
-	} 	
-
-	pr_err("llfree thread %u: send auto_deflate request\n", current->pid);
+	spin_lock(&vb_llfree->lock_auto_deflate);
 	virtio_llfree_send_request(vb_llfree, AUTO_DEFLATE);
-	pr_err("llfree thread %u: done with auto_deflate request\n", current->pid);
-	mutex_unlock(&vb_llfree->mutex_auto_deflate);
-	// spin_unlock(&vb_llfree->lock_auto_deflate);
+	spin_unlock(&vb_llfree->lock_auto_deflate);
 }
 EXPORT_SYMBOL(virtio_llfree_auto_deflate);
 
@@ -131,10 +122,10 @@ static void shrink_pagecache_func(struct work_struct *work) {
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
 		struct virtio_llfree_balloon *vb;
-		uint32_t shrink_pagecache_num_pages;
 		vb = (struct virtio_llfree_balloon *) vdev->priv;
 
 		// dispatch
+		uint32_t shrink_pagecache_num_pages;
 		virtio_cread_le(vdev, struct virtio_llfree_balloon_config, 
 		                shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
 
@@ -215,7 +206,6 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 
 	vb_llfree = vb;
 	spin_lock_init(&vb->lock_auto_deflate);
-	mutex_init(&vb->mutex_auto_deflate);
 	
 	virtio_device_ready(vdev);
 	virtio_llfree_send_llfree_info(vb);
