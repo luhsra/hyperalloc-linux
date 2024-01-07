@@ -1,6 +1,7 @@
 #include "asm/io.h"
 #include "asm/stat.h"
 #include "linux/mmzone.h"
+#include "linux/mutex.h"
 #include "linux/spinlock.h"
 #include "linux/types.h"
 #include "linux/virtio_config.h"
@@ -56,6 +57,7 @@ struct virtio_llfree_balloon {
 	struct virtqueue *llfree_request_vq;
 	struct work_struct shrink_pagecache_work;
 	spinlock_t lock_auto_deflate;
+	struct mutex mutex_auto_deflate;
 	LLFreeBalloonRequest guest_req;
 	llfree_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
@@ -93,9 +95,19 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 
 void noinline virtio_llfree_auto_deflate(void) {
 	//spinloc
-	spin_lock(&vb_llfree->lock_auto_deflate);
+	// spin_lock(&vb_llfree->lock_auto_deflate);
+	int ret;
+	ret = mutex_trylock(&vb_llfree->mutex_auto_deflate);
+	if(ret == 0) {
+		pr_err("llfree thread %u: mutex auto_deflate contended\n", current->pid);
+		mutex_lock(&vb_llfree->mutex_auto_deflate);
+	} 	
+
+	pr_err("llfree thread %u: send auto_deflate request\n", current->pid);
 	virtio_llfree_send_request(vb_llfree, AUTO_DEFLATE);
-	spin_unlock(&vb_llfree->lock_auto_deflate);
+	pr_err("llfree thread %u: done with auto_deflate request\n", current->pid);
+	mutex_unlock(&vb_llfree->mutex_auto_deflate);
+	// spin_unlock(&vb_llfree->lock_auto_deflate);
 }
 EXPORT_SYMBOL(virtio_llfree_auto_deflate);
 
@@ -119,10 +131,10 @@ static void shrink_pagecache_func(struct work_struct *work) {
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
 		struct virtio_llfree_balloon *vb;
+		uint32_t shrink_pagecache_num_pages;
 		vb = (struct virtio_llfree_balloon *) vdev->priv;
 
 		// dispatch
-		uint32_t shrink_pagecache_num_pages;
 		virtio_cread_le(vdev, struct virtio_llfree_balloon_config, 
 		                shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
 
@@ -203,6 +215,7 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 
 	vb_llfree = vb;
 	spin_lock_init(&vb->lock_auto_deflate);
+	mutex_init(&vb->mutex_auto_deflate);
 	
 	virtio_device_ready(vdev);
 	virtio_llfree_send_llfree_info(vb);

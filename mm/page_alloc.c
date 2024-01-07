@@ -4126,17 +4126,18 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 		res = llfree_get(zone->llfree, cpu, llf);
 
 		if(res.val == LLFREE_ERR_MEMORY) {
+			pr_err("llfree thread %u: order %u, try %u to auto deflate\n", current->pid, order, i);
 			virtio_llfree_auto_deflate();
 			continue;
+		} else if(res.val < 0){
+			pr_err("llfree thread %u: error repeat rmqueue  %lld", current->pid, res.val);
 		}
 		break;
 	}
 
 	if (!llfree_ok(res)) {
 		put_cpu();
-		pr_err("llfree: err %lld", res.val);
-		if (res.val != LLFREE_ERR_MEMORY)
-			llfree_print(zone->llfree);
+		pr_err("llfree thread %u: error rmqueue  %lld", current->pid, res.val);
 		BUG_ON(res.val != LLFREE_ERR_MEMORY);
 	} else {
 		size_t offset;
