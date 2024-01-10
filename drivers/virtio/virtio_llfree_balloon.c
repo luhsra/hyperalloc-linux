@@ -49,6 +49,16 @@ struct LLFreeBalloonRequest {
 
 typedef struct LLFreeBalloonRequest LLFreeBalloonRequest;
 
+enum llfree_zone_type {
+	LLFREE_NON_EXISTING,
+	LLFREE_ZONE_DMA,
+	LLFREE_ZONE_DMA32,
+	LLFREE_ZONE_NORMAL,
+	LLFREE_ZONE_HIGHMEM,
+	LLFREE_ZONE_MOVABLE,
+	LLFREE_ZONE_DEVICE,
+	LLFREE_MAX_NR_ZONES
+};
 
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
@@ -60,18 +70,45 @@ struct virtio_llfree_balloon {
 	llfree_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
 	wait_queue_head_t acked;
+	enum llfree_zone_type map_zone_type[LLFREE_MAX_NR_ZONES];
 };
 
 struct virtio_llfree_balloon *vb_llfree;
+
+static void noinline virtio_llfree_init_map_zone_types(enum llfree_zone_type *map_zone_type) {
+	for(uint32_t i = 0; i < LLFREE_MAX_NR_ZONES; i++) {
+		map_zone_type[i] = LLFREE_NON_EXISTING;
+	}
+
+	#ifdef CONFIG_ZONE_DMA
+	map_zone_type[ZONE_DMA] = LLFREE_ZONE_DMA;
+	#endif
+
+	#ifdef CONFIG_ZONE_DMA32
+	map_zone_type[ZONE_DMA32] = LLFREE_ZONE_DMA32;
+	#endif	
+
+	map_zone_type[ZONE_NORMAL] = LLFREE_ZONE_NORMAL;
+	
+	#ifdef CONFIG_HIGHMEM
+	map_zone_type[ZONE_HIGHMEM] = LLFREE_ZONE_HIGHMEM;
+	#endif
+
+	map_zone_type[ZONE_MOVABLE] = LLFREE_ZONE_MOVABLE;
+
+	#ifdef CONFIG_ZONE_DEVICE
+	map_zone_type[ZONE_DEVICE] = LLFREE_ZONE_DEVICE;
+	#endif
+}
 
 static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon *vb) {
 	struct scatterlist sg;
 	struct zone *zone;
 
-	struct pglist_data *pgdat = first_online_pgdat();
-	zone = &pgdat->node_zones[ZONE_NORMAL];
+	// struct pglist_data *pgdat = first_online_pgdat();
+	// zone = &pgdat->node_zones[ZONE_NORMAL];
 
-	// for_each_populated_zone(zone) {
+	for_each_populated_zone(zone) {
 		vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone->vm_stat[NR_FREE_PAGES];
 		vb->qemu_info.qemu_llfree = (llfree_t *) zone->llfree;
 		vb->qemu_info.num_pagecache_reclaimable_pages = (_Atomic(int64_t) *) &zone->zone_pgdat->vm_stat[NR_FILE_PAGES];
@@ -80,7 +117,7 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 		sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
 		virtqueue_add_outbuf(vb->llfree_info_vq, &sg, 1, vb, GFP_KERNEL);
 		virtqueue_kick(vb->llfree_info_vq);
-	// }
+	}
 }
 
 static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb, RequestType llfree_request) {
@@ -190,6 +227,7 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 	}
 
 	INIT_WORK(&vb->shrink_pagecache_work, shrink_pagecache_func);
+	virtio_llfree_init_map_zone_types((enum llfree_zone_type *) &vb->map_zone_type);
 
 	init_waitqueue_head(&vb->acked);
 	
