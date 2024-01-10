@@ -105,13 +105,19 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 	struct scatterlist sg;
 	struct zone *zone;
 
-	// struct pglist_data *pgdat = first_online_pgdat();
-	// zone = &pgdat->node_zones[ZONE_NORMAL];
+	struct pglist_data *pgdat = first_online_pgdat();
 
-	for_each_populated_zone(zone) {
+	for(uint32_t i = 0; i < MAX_NR_ZONES; i++) {
+		zone = &pgdat->node_zones[i];
+
+		if(!populated_zone(zone)) {
+			continue;
+		}
+		
 		vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone->vm_stat[NR_FREE_PAGES];
 		vb->qemu_info.qemu_llfree = (llfree_t *) zone->llfree;
 		vb->qemu_info.num_pagecache_reclaimable_pages = (_Atomic(int64_t) *) &zone->zone_pgdat->vm_stat[NR_FILE_PAGES];
+		vb->qemu_info.zone_type = vb->map_zone_type[i];
 		llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
 
 		sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
