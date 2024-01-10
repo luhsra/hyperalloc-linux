@@ -8,6 +8,7 @@
 
 typedef struct llfree_info {
 	llfree_t *qemu_llfree;
+	uint32_t zone_type;
 	_Atomic(int64_t) *zone_normal_free_pages;
 	_Atomic(int64_t) *num_pagecache_reclaimable_pages;
 } llfree_info_t;
