@@ -115,9 +115,10 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 		}
 		
 		vb->qemu_info.zone_normal_free_pages = (_Atomic(int64_t) *) &zone->vm_stat[NR_FREE_PAGES];
+		vb->qemu_info.zone_type = vb->map_zone_type[i];
+		vb->qemu_info.numa_node_id = pgdat->node_id;
 		vb->qemu_info.qemu_llfree = (llfree_t *) zone->llfree;
 		vb->qemu_info.num_pagecache_reclaimable_pages = (_Atomic(int64_t) *) &zone->zone_pgdat->vm_stat[NR_FILE_PAGES];
-		vb->qemu_info.zone_type = vb->map_zone_type[i];
 		llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
 
 		sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);

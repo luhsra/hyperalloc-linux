@@ -1,6 +1,7 @@
 #ifndef _LLFREE_QEMU
 #define _LLFREE_QEMU
 
+#include <stdint.h>
 #ifdef CONFIG_LLFREE
 
 #include <llfree.h>
@@ -9,6 +10,7 @@
 typedef struct llfree_info {
 	llfree_t *qemu_llfree;
 	uint32_t zone_type;
+	uint32_t numa_node_id;
 	_Atomic(int64_t) *zone_normal_free_pages;
 	_Atomic(int64_t) *num_pagecache_reclaimable_pages;
 } llfree_info_t;
