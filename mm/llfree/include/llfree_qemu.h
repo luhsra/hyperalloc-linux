@@ -1,7 +1,6 @@
 #ifndef _LLFREE_QEMU
 #define _LLFREE_QEMU
 
-#include <stdint.h>
 #ifdef CONFIG_LLFREE
 
 #include <llfree.h>

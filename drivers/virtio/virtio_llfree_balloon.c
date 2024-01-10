@@ -1,6 +1,7 @@
 #include "asm/io.h"
 #include "asm/stat.h"
 #include "linux/mmzone.h"
+#include "linux/numa.h"
 #include "linux/spinlock.h"
 #include "linux/types.h"
 #include "linux/virtio_config.h"
@@ -119,6 +120,7 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 		vb->qemu_info.numa_node_id = pgdat->node_id;
 		vb->qemu_info.qemu_llfree = (llfree_t *) zone->llfree;
 		vb->qemu_info.num_pagecache_reclaimable_pages = (_Atomic(int64_t) *) &zone->zone_pgdat->vm_stat[NR_FILE_PAGES];
+
 		llfree_copy_into_buffer(&vb->qemu_info, vb->vq_buffer.buf);
 
 		sg_init_one(&sg, vb->vq_buffer.buf, vb->vq_buffer.len);
