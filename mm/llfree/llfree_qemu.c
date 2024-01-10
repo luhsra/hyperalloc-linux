@@ -1,10 +1,10 @@
 #include "linux/compiler_attributes.h"
 #include "llfree.h"
 #include "llfree_inner.h"
-#include "llfree_qemu.h"
 #include <linux/slab.h> 
 #include "asm/io.h"
-#include <stdint.h>
+
+#include "llfree_qemu.h"
 
 typedef struct llfree_info_buffer{
 	llfree_t qemu_llfree;
@@ -39,6 +39,8 @@ void noinline llfree_copy_into_buffer(llfree_info_t *llfree_info, void *buffer) 
 	*qemu_llfree = *llfree_info->qemu_llfree;
 	qemu_llfree->meta = NULL;
 	qemu_llfree->local = (struct local *) virt_to_phys(qemu_llfree->local);
+	llfree_info_buffer->zone_type = llfree_info->zone_type;
+	llfree_info_buffer->numa_node_id = llfree_info->numa_node_id;
 	llfree_info_buffer->zone_normal_free_pages = llfree_info->zone_normal_free_pages;
 	llfree_info_buffer->num_pagecache_reclaimable_pages = llfree_info->num_pagecache_reclaimable_pages;
 	
