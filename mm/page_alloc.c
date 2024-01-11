@@ -49,6 +49,7 @@
 #include <linux/vmstat.h>
 #include <linux/mempolicy.h>
 #include <linux/memremap.h>
+#include <linux/mmzone.h>
 #include <linux/stop_machine.h>
 #include <linux/random.h>
 #include <linux/sort.h>
@@ -4106,19 +4107,6 @@ out:
 }
 #else // CONFIG_LLFREE
 
-static int32_t get_zone_type(struct zone *zone) {
-	struct pglist_data *node = zone->zone_pgdat;	
-
-	for(uint32_t i = 0; i < MAX_NR_ZONES; i++) {
-		if (&node->node_zones[i] == zone) {
-			return i;
-		}
-	}
-
-	return -1;
-}
-EXPORT_SYMBOL(get_zone_type);
-
 /*
  * Allocate a page from the given zone.
  */
@@ -4139,7 +4127,7 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 		res = llfree_get(zone->llfree, cpu, llf);
 
 		if(res.val == LLFREE_ERR_MEMORY) {
-			zone_type = get_zone_type(zone);
+			zone_type = zone_get_type(zone);
 			if(zone_type != -1) 
 				virtio_llfree_auto_deflate(zone->node, zone_type);
 			continue;

@@ -1308,6 +1308,21 @@ static inline bool zone_is_zone_device(struct zone *zone)
 }
 #endif
 
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+static inline int32_t zone_get_type(struct zone *zone) {
+	struct pglist_data *node;
+	node = zone->zone_pgdat;	
+
+	for(uint32_t i = 0; i < MAX_NR_ZONES; i++) {
+		if (&node->node_zones[i] == zone) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+#endif // CONFIG_VIRTIO_LLFREE_BALLOON
+
 /*
  * Returns true if a zone has pages managed by the buddy allocator.
  * All the reclaim decisions have to use this function rather than
