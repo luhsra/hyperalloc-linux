@@ -873,6 +873,10 @@ struct zone {
 	/* Zone statistics */
 	atomic_long_t		vm_stat[NR_VM_ZONE_STAT_ITEMS];
 	atomic_long_t		vm_numa_event[NR_VM_NUMA_EVENT_ITEMS];
+
+	#ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+	atomic_long_t vm_stat_llfree_huge_pages;
+	#endif
 } ____cacheline_internodealigned_in_smp;
 
 enum pgdat_flags {
