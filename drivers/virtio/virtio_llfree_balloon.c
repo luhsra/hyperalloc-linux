@@ -29,26 +29,9 @@ extern uint32_t shrink_pagecache_for_reclaim(uint32_t nr_to_reclaim);
 enum virtio_llfree_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ,
 	VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ,
+	VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ,
 	VIRTIO_LLFREE_BALLOON_VQ_MAX,
 };
-
-struct llfree_vq_buffer {
-	void *buf;
-	size_t len;
-};
-
-enum RequestType {
-    SCHEDULE_LLFREE_BALLOON_UPDATE,
-    AUTO_DEFLATE,
-};
-
-typedef enum RequestType RequestType;
-
-struct LLFreeBalloonRequest {
-    RequestType req;
-};
-
-typedef struct LLFreeBalloonRequest LLFreeBalloonRequest;
 
 enum llfree_zone_type {
 	LLFREE_NON_EXISTING,
@@ -61,13 +44,36 @@ enum llfree_zone_type {
 	LLFREE_MAX_NR_ZONES
 };
 
+enum RequestType {
+    SCHEDULE_LLFREE_BALLOON_UPDATE,
+};
+typedef enum RequestType RequestType;
+
+struct llfree_vq_buffer {
+	void *buf;
+	size_t len;
+};
+
+struct LLFreeBalloonRequest {
+    RequestType req;
+};
+typedef struct LLFreeBalloonRequest LLFreeBalloonRequest;
+
+struct AutoDeflateInfo{
+	uint32_t numa_node_id;
+	uint32_t zone_type;
+};
+typedef struct AutoDeflateInfo AutoDeflateInfo;
+
 struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *llfree_info_vq; 
 	struct virtqueue *llfree_request_vq;
+	struct virtqueue *llfree_auto_deflate_vq;
 	struct work_struct shrink_pagecache_work;
 	spinlock_t lock_auto_deflate;
 	LLFreeBalloonRequest guest_req;
+	AutoDeflateInfo auto_deflate_info;
 	llfree_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
 	wait_queue_head_t acked;
@@ -140,10 +146,20 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 		wait_event(vb->acked, virtqueue_get_buf(vb->llfree_request_vq, &len));
 }
 
-void noinline virtio_llfree_auto_deflate(void) {
-	//spinloc
+void noinline virtio_llfree_auto_deflate(uint32_t numa_node_id, uint32_t zone_type) {
+	//spinlock
+	struct scatterlist sg;
+	uint32_t len;
+
 	spin_lock(&vb_llfree->lock_auto_deflate);
-	virtio_llfree_send_request(vb_llfree, AUTO_DEFLATE);
+
+	vb_llfree->auto_deflate_info.numa_node_id = numa_node_id;
+	vb_llfree->auto_deflate_info.zone_type = vb_llfree->map_zone_type[zone_type];
+	sg_init_one(&sg, &vb_llfree->auto_deflate_info, sizeof(AutoDeflateInfo));
+	virtqueue_add_outbuf(vb_llfree->llfree_auto_deflate_vq, &sg, 1, vb_llfree, GFP_KERNEL);
+	virtqueue_kick(vb_llfree->llfree_auto_deflate_vq);
+	wait_event(vb_llfree->acked, virtqueue_get_buf(vb_llfree->llfree_auto_deflate_vq, &len));	
+
 	spin_unlock(&vb_llfree->lock_auto_deflate);
 }
 EXPORT_SYMBOL(virtio_llfree_auto_deflate);
@@ -209,6 +225,9 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = "llfree info";
 	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = balloon_ack;
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = "llfree requests";
+	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = balloon_ack;
+	names[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = "llfree auto-deflate";
+
 	err = virtio_find_vqs(vb->vdev, VIRTIO_LLFREE_BALLOON_VQ_MAX, vqs,
 			      callbacks, names, NULL);
 	if (err)
@@ -216,9 +235,10 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 
 	vb->llfree_info_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ];
 	vb->llfree_request_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ];
+	vb->llfree_auto_deflate_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ];
+
 	return 0;
 }
-
 
 static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 {

@@ -88,7 +88,7 @@
 #include "page_reporting.h"
 #include "swap.h"
 
-extern void noinline virtio_llfree_auto_deflate(void);
+extern void noinline virtio_llfree_auto_deflate(uint32_t numa_node_id, uint32_t zone_type);
 
 /* Free Page Internal flags: for internal, non-pcp variants of free_pages(). */
 typedef int __bitwise fpi_t;
@@ -4106,6 +4106,19 @@ out:
 }
 #else // CONFIG_LLFREE
 
+static int32_t get_zone_type(struct zone *zone) {
+	struct pglist_data *node = zone->zone_pgdat;	
+
+	for(uint32_t i = 0; i < MAX_NR_ZONES; i++) {
+		if (&node->node_zones[i] == zone) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+EXPORT_SYMBOL(get_zone_type);
+
 /*
  * Allocate a page from the given zone.
  */
@@ -4115,7 +4128,7 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 				   int migratetype)
 {
 	struct page *page = NULL;
-	int cpu;
+	int cpu, zone_type;
 	llfree_result_t res;
 	llflags_t llf = llflags(order);
 	llf.movable = gfp_flags & __GFP_MOVABLE ? 1 : 0;
@@ -4126,7 +4139,9 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 		res = llfree_get(zone->llfree, cpu, llf);
 
 		if(res.val == LLFREE_ERR_MEMORY) {
-			virtio_llfree_auto_deflate();
+			zone_type = get_zone_type(zone);
+			if(zone_type != -1) 
+				virtio_llfree_auto_deflate(zone->node, zone_type);
 			continue;
 		}
 		break;
