@@ -876,6 +876,7 @@ struct zone {
 
 	#ifdef CONFIG_VIRTIO_LLFREE_BALLOON
 	atomic_long_t vm_stat_llfree_huge_pages;
+  struct mutex auto_deflate_lock;
 	#endif
 } ____cacheline_internodealigned_in_smp;
 

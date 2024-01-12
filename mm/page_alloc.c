@@ -89,7 +89,7 @@
 #include "page_reporting.h"
 #include "swap.h"
 
-extern void noinline virtio_llfree_auto_deflate(uint32_t numa_node_id, uint32_t zone_type);
+extern void noinline virtio_llfree_auto_deflate(struct zone * zone);
 
 /* Free Page Internal flags: for internal, non-pcp variants of free_pages(). */
 typedef int __bitwise fpi_t;
@@ -4116,24 +4116,26 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 				   int migratetype)
 {
 	struct page *page = NULL;
-	int cpu, zone_type;
+	int cpu;
 	llfree_result_t res;
 	llflags_t llf = llflags(order);
 	llf.movable = gfp_flags & __GFP_MOVABLE ? 1 : 0;
 
 	cpu = get_cpu();
 
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON
 	for(uint32_t i = 0; i < 2; i++) {
 		res = llfree_get(zone->llfree, cpu, llf);
 
-		if(res.val == LLFREE_ERR_MEMORY) {
-			zone_type = zone_get_type(zone);
-			if(zone_type != -1) 
-				virtio_llfree_auto_deflate(zone->node, zone_type);
+		if((res.val == LLFREE_ERR_MEMORY) && (atomic_long_read(&zone->vm_stat_llfree_huge_pages) > 0)) {
+      virtio_llfree_auto_deflate(zone);
 			continue;
 		}
 		break;
 	}
+  #else
+	res = llfree_get(zone->llfree, cpu, order);
+  #endif
 
 	if (!llfree_ok(res)) {
 		put_cpu();
@@ -8072,6 +8074,9 @@ static void __meminit zone_init_internals(struct zone *zone, enum zone_type idx,
 	zone->zone_pgdat = NODE_DATA(nid);
 	spin_lock_init(&zone->lock);
 	zone_seqlock_init(zone);
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+  mutex_init(&zone->auto_deflate_lock);
+  #endif
 	zone_pcp_init(zone);
 }
 

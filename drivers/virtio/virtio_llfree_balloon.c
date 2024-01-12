@@ -1,8 +1,12 @@
 #include "asm/io.h"
+#include "asm/numa.h"
 #include "asm/stat.h"
+#include "linux/cpumask.h"
+#include "linux/gfp_types.h"
 #include "linux/mmzone.h"
 #include "linux/numa.h"
-#include "linux/spinlock.h"
+#include "linux/smp.h"
+#include "linux/topology.h"
 #include "linux/types.h"
 #include "linux/virtio_config.h"
 #include "linux/virtio_types.h"
@@ -29,7 +33,6 @@ extern uint32_t shrink_pagecache_for_reclaim(uint32_t nr_to_reclaim);
 enum virtio_llfree_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ,
 	VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ,
-	VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ,
 	VIRTIO_LLFREE_BALLOON_VQ_MAX,
 };
 
@@ -69,9 +72,8 @@ struct virtio_llfree_balloon {
 	struct virtio_device *vdev;
 	struct virtqueue *llfree_info_vq; 
 	struct virtqueue *llfree_request_vq;
-	struct virtqueue *llfree_auto_deflate_vq;
+	struct virtqueue **llfree_auto_deflate_vqs;
 	struct work_struct shrink_pagecache_work;
-	spinlock_t lock_auto_deflate;
 	LLFreeBalloonRequest guest_req;
 	AutoDeflateInfo auto_deflate_info;
 	llfree_zone_info_t qemu_info;
@@ -147,21 +149,40 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 		wait_event(vb->acked, virtqueue_get_buf(vb->llfree_request_vq, &len));
 }
 
-void noinline virtio_llfree_auto_deflate(uint32_t numa_node_id, uint32_t zone_type) {
-	//spinlock
+void noinline virtio_llfree_auto_deflate(struct zone *zone) {
 	struct scatterlist sg;
-	uint32_t len;
+	uint32_t len, core, num_cores;
+  uint32_t numa_node_id, zone_type;
 
-	spin_lock(&vb_llfree->lock_auto_deflate);
+  zone_type = zone_get_type(zone);
 
+  if(zone_type == -1) {
+    printk("llfree_balloon: could not find zone_type!\n");
+    return;
+  }
+
+  numa_node_id = zone->node;
+
+  // are core ids alway(or at least normally) continuous?
+  num_cores = num_online_cpus();
+  core = raw_smp_processor_id();
+
+  if(core > num_cores){
+    printk("llfree_balloon: core > num_cores!\n");
+    return;
+  }
+
+  mutex_lock(&zone->auto_deflate_lock);
+  
+  printk("auto-deflate: core %u zone %u\n", core, zone_type);
 	vb_llfree->auto_deflate_info.numa_node_id = numa_node_id;
 	vb_llfree->auto_deflate_info.zone_type = vb_llfree->map_zone_type[zone_type];
 	sg_init_one(&sg, &vb_llfree->auto_deflate_info, sizeof(AutoDeflateInfo));
-	virtqueue_add_outbuf(vb_llfree->llfree_auto_deflate_vq, &sg, 1, vb_llfree, GFP_KERNEL);
-	virtqueue_kick(vb_llfree->llfree_auto_deflate_vq);
-	wait_event(vb_llfree->acked, virtqueue_get_buf(vb_llfree->llfree_auto_deflate_vq, &len));	
+	virtqueue_add_outbuf(vb_llfree->llfree_auto_deflate_vqs[core], &sg, 1, vb_llfree, GFP_KERNEL);
+	virtqueue_kick(vb_llfree->llfree_auto_deflate_vqs[core]);
+	wait_event(vb_llfree->acked, virtqueue_get_buf(vb_llfree->llfree_auto_deflate_vqs[core], &len));	
 
-	spin_unlock(&vb_llfree->lock_auto_deflate);
+  mutex_unlock(&zone->auto_deflate_lock);
 }
 EXPORT_SYMBOL(virtio_llfree_auto_deflate);
 
@@ -217,26 +238,46 @@ static void balloon_ack(struct virtqueue *vq)
 
 static int init_vqs(struct virtio_llfree_balloon *vb)
 {
-	struct virtqueue *vqs[VIRTIO_LLFREE_BALLOON_VQ_MAX];
-	vq_callback_t *callbacks[VIRTIO_LLFREE_BALLOON_VQ_MAX];
-	const char *names[VIRTIO_LLFREE_BALLOON_VQ_MAX];
+	struct virtqueue **vqs;
+	vq_callback_t **callbacks;
+	const char **names;
 	int err;
+  uint32_t num_vqs, num_cpus;
+
+  // we assume no cpu hotplug...
+  num_cpus = num_online_cpus();
+  num_vqs = VIRTIO_LLFREE_BALLOON_VQ_MAX + num_cpus; 
+
+  vqs = kzalloc((num_vqs * sizeof(struct virtqueue *)), GFP_KERNEL);
+  callbacks = kzalloc(num_vqs * (sizeof(vq_callback_t *)), GFP_KERNEL);
+  names = kzalloc((num_vqs * sizeof(char *)), GFP_KERNEL);
+
 
 	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = virtio_llfree_callback;
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = "llfree info";
 	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = balloon_ack;
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = "llfree requests";
-	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = balloon_ack;
-	names[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = "llfree auto-deflate";
 
-	err = virtio_find_vqs(vb->vdev, VIRTIO_LLFREE_BALLOON_VQ_MAX, vqs,
+  for(uint32_t i = 0; i < num_cpus; i++) {
+    callbacks[VIRTIO_LLFREE_BALLOON_VQ_MAX + i] = balloon_ack;
+    names[VIRTIO_LLFREE_BALLOON_VQ_MAX + i] = "llfree auto-deflate vq";
+  }
+
+	// callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = balloon_ack;
+	// names[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = "llfree auto-deflate";
+
+	err = virtio_find_vqs(vb->vdev, num_vqs, vqs,
 			      callbacks, names, NULL);
 	if (err)
 		return err;
 
 	vb->llfree_info_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ];
 	vb->llfree_request_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ];
-	vb->llfree_auto_deflate_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ];
+
+  for(uint32_t i = 0; i < num_cpus; i++) {
+    vb->llfree_auto_deflate_vqs[i] = vqs[VIRTIO_LLFREE_BALLOON_VQ_MAX + i];
+  }
+	// vb->llfree_auto_deflate_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ];
 
 	return 0;
 }
@@ -245,6 +286,8 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb;
 	int err;
+  uint32_t num_cores;
+
 	if (!vdev->config->get) {
 		dev_err(&vdev->dev, "%s failure: config access disabled\n",
 			__func__);
@@ -268,12 +311,19 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 	}
 
 	vb->vdev = vdev;
+
+  num_cores = num_online_cpus();
+  vb->llfree_auto_deflate_vqs = kzalloc(sizeof(struct virtqueue *) * num_cores, GFP_KERNEL);
+	if (!vb->llfree_auto_deflate_vqs) {
+		err = -ENOMEM;
+		goto out;
+	}
+
 	err = init_vqs(vb);
 	if (err)
 		goto out_free_vb;
 
 	vb_llfree = vb;
-	spin_lock_init(&vb->lock_auto_deflate);
 	
 	virtio_device_ready(vdev);
 	virtio_llfree_send_llfree_info(vb);
@@ -295,6 +345,7 @@ static void remove_common(struct virtio_llfree_balloon *vb)
 static void virtio_llfree_remove(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb = vdev->priv;
+  kfree(vb->llfree_auto_deflate_vqs);
 	kfree(vb->vq_buffer.buf);
 	remove_common(vb);
 	kfree(vb);
