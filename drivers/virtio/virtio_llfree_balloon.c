@@ -75,7 +75,7 @@ struct virtio_llfree_balloon {
 	struct virtqueue **llfree_auto_deflate_vqs;
 	struct work_struct shrink_pagecache_work;
 	LLFreeBalloonRequest guest_req;
-	AutoDeflateInfo auto_deflate_info;
+	AutoDeflateInfo *auto_deflate_info;
 	llfree_zone_info_t qemu_info;
 	struct llfree_vq_buffer vq_buffer;
 	wait_queue_head_t acked;
@@ -175,9 +175,9 @@ void noinline virtio_llfree_auto_deflate(struct zone *zone) {
   mutex_lock(&zone->auto_deflate_lock);
   
   printk("auto-deflate: core %u zone %u\n", core, zone_type);
-	vb_llfree->auto_deflate_info.numa_node_id = numa_node_id;
-	vb_llfree->auto_deflate_info.zone_type = vb_llfree->map_zone_type[zone_type];
-	sg_init_one(&sg, &vb_llfree->auto_deflate_info, sizeof(AutoDeflateInfo));
+	vb_llfree->auto_deflate_info[core].numa_node_id = numa_node_id;
+	vb_llfree->auto_deflate_info[core].zone_type = vb_llfree->map_zone_type[zone_type];
+	sg_init_one(&sg, &vb_llfree->auto_deflate_info[core], sizeof(AutoDeflateInfo));
 	virtqueue_add_outbuf(vb_llfree->llfree_auto_deflate_vqs[core], &sg, 1, vb_llfree, GFP_KERNEL);
 	virtqueue_kick(vb_llfree->llfree_auto_deflate_vqs[core]);
 	wait_event(vb_llfree->acked, virtqueue_get_buf(vb_llfree->llfree_auto_deflate_vqs[core], &len));	
@@ -313,6 +313,7 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 	vb->vdev = vdev;
 
   num_cores = num_online_cpus();
+  vb->auto_deflate_info = kzalloc(sizeof(AutoDeflateInfo *) * num_cores, GFP_KERNEL);
   vb->llfree_auto_deflate_vqs = kzalloc(sizeof(struct virtqueue *) * num_cores, GFP_KERNEL);
 	if (!vb->llfree_auto_deflate_vqs) {
 		err = -ENOMEM;
@@ -346,6 +347,7 @@ static void virtio_llfree_remove(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb = vdev->priv;
   kfree(vb->llfree_auto_deflate_vqs);
+  kfree(vb->auto_deflate_info);
 	kfree(vb->vq_buffer.buf);
 	remove_common(vb);
 	kfree(vb);
