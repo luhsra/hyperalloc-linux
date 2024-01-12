@@ -28,7 +28,7 @@
 #include "llfree_qemu.h"
 #include "llfree_qemu_test.h"
 
-extern uint32_t shrink_pagecache_for_reclaim(uint32_t nr_to_reclaim);
+extern uint32_t shrink_pagecache_for_reclaim(uint32_t nr_to_reclaim, uint32_t num_numa_node);
 
 enum virtio_llfree_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ,
@@ -188,14 +188,17 @@ EXPORT_SYMBOL(virtio_llfree_auto_deflate);
 
 static void shrink_pagecache_func(struct work_struct *work) {
 		struct virtio_llfree_balloon *vb;
-		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages;
+		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages, num_numa_node;
 
 		vb = container_of(work, struct virtio_llfree_balloon, shrink_pagecache_work);
 
 		virtio_cread_le(vb->vdev, struct virtio_llfree_balloon_config, 
 		                shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
 
-		reclaimed_nr_pages = shrink_pagecache_for_reclaim(shrink_pagecache_num_pages);
+		virtio_cread_le(vb->vdev, struct virtio_llfree_balloon_config, 
+		                num_numa_node, &num_numa_node);
+
+		reclaimed_nr_pages = shrink_pagecache_for_reclaim(shrink_pagecache_num_pages, num_numa_node);
 
 		shrink_pagecache_num_pages = 0;
 		virtio_cwrite_le(vb->vdev, struct virtio_llfree_balloon_config, 
