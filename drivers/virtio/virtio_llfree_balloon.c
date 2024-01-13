@@ -385,6 +385,7 @@ static void virtio_llfree_remove(struct virtio_device *vdev)
 
 static unsigned int features[] = {
   VIRTIO_LLFREE_BALLOON_F_DEMAND_SHRINK_PAGECACHE,
+  VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE,
 };
 
 static struct virtio_driver virtio_llfree_balloon_driver = {
