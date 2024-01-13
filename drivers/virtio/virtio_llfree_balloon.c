@@ -129,6 +129,7 @@ static void noinline virtio_llfree_send_llfree_info(struct virtio_llfree_balloon
 	}
 }
 
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_DEMAND_SHRINK_PAGECACHE
 static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb, RequestType llfree_request) {
 		struct scatterlist sg;
 		uint32_t len;
@@ -139,6 +140,7 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 		virtqueue_kick(vb->llfree_request_vq);
 		wait_event(vb->acked, virtqueue_get_buf(vb->llfree_request_vq, &len));
 }
+#endif
 
 void noinline virtio_llfree_auto_deflate(struct zone *zone) {
 	struct scatterlist sg;
@@ -177,6 +179,7 @@ void noinline virtio_llfree_auto_deflate(struct zone *zone) {
 }
 EXPORT_SYMBOL(virtio_llfree_auto_deflate);
 
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_DEMAND_SHRINK_PAGECACHE
 static void shrink_pagecache_func(struct work_struct *work) {
 		struct virtio_llfree_balloon *vb;
 		uint32_t reclaimed_nr_pages, shrink_pagecache_num_pages, num_numa_node;
@@ -197,8 +200,10 @@ static void shrink_pagecache_func(struct work_struct *work) {
 
 		virtio_llfree_send_request(vb, SCHEDULE_LLFREE_BALLOON_UPDATE);
 }
+#endif
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
+    #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_DEMAND_SHRINK_PAGECACHE 
 		struct virtio_llfree_balloon *vb;
 		uint32_t shrink_pagecache_num_pages;
 
@@ -213,6 +218,7 @@ static void virtio_llfree_config_changed(struct virtio_device *vdev) {
           queue_work(system_freezable_wq, &vb->shrink_pagecache_work);
       }
     }
+    #endif
 }
 
 // IDs can't be arbitrarily chosen, for now
@@ -296,9 +302,12 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 		goto out;
 	}
 
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_DEMAND_SHRINK_PAGECACHE
   if(virtio_has_feature(vdev, VIRTIO_LLFREE_BALLOON_F_DEMAND_SHRINK_PAGECACHE)) {
     INIT_WORK(&vb->shrink_pagecache_work, shrink_pagecache_func);
   }
+  #endif
+
 
 	virtio_llfree_init_map_zone_types((enum llfree_zone_type *) &vb->map_zone_type);
 	init_waitqueue_head(&vb->acked);

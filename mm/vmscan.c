@@ -7479,7 +7479,7 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 }
 #endif /* CONFIG_HIBERNATION */
 
-#ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+#ifdef CONFIG_VIRTIO_LLFREE_DEMAND_SHRINK_PAGECACHE
 unsigned long shrink_pagecache_for_reclaim(uint32_t num_numa_node, uint32_t nr_to_reclaim)
 {
 	struct scan_control sc = {
