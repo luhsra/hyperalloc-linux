@@ -7479,7 +7479,7 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 }
 #endif /* CONFIG_HIBERNATION */
 
-#ifdef CONFIG_VIRTIO_LLFREE_DEMAND_SHRINK_PAGECACHE
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_DEMAND_SHRINK_PAGECACHE
 unsigned long shrink_pagecache_for_reclaim(uint32_t num_numa_node, uint32_t nr_to_reclaim)
 {
 	struct scan_control sc = {
@@ -7509,7 +7509,7 @@ unsigned long shrink_pagecache_for_reclaim(uint32_t num_numa_node, uint32_t nr_t
 	return nr_reclaimed;
 }
 EXPORT_SYMBOL(shrink_pagecache_for_reclaim);
-#endif /* CONFIG_VIRTIO_LLFREE_BALLOON */
+#endif /* CONFIG_VIRTIO_LLFREE_BALLOON_DEMAND_SHRINK_PAGECACHE */
 
 /*
  * This kswapd start function will be called by init and node-hot-add.
