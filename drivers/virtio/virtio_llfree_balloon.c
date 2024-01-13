@@ -65,10 +65,10 @@ struct virtio_llfree_balloon {
 	struct virtqueue *llfree_request_vq;
 	struct virtqueue **llfree_auto_deflate_vqs;
 	struct work_struct shrink_pagecache_work;
+	struct llfree_vq_buffer vq_buffer;
 	LLFreeBalloonRequest guest_req;
 	AutoDeflateInfo *auto_deflate_info;
 	llfree_zone_info_t qemu_info;
-	struct llfree_vq_buffer vq_buffer;
 	wait_queue_head_t acked;
 	enum llfree_zone_type map_zone_type[LLFREE_MAX_NR_ZONES];
 };
@@ -142,6 +142,7 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 }
 #endif
 
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
 void noinline virtio_llfree_auto_deflate(struct zone *zone) {
 	struct scatterlist sg;
 	uint32_t len, core, num_cores;
@@ -178,6 +179,7 @@ void noinline virtio_llfree_auto_deflate(struct zone *zone) {
   mutex_unlock(&zone->auto_deflate_lock);
 }
 EXPORT_SYMBOL(virtio_llfree_auto_deflate);
+#endif
 
 #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_DEMAND_SHRINK_PAGECACHE
 static void shrink_pagecache_func(struct work_struct *work) {
@@ -245,29 +247,38 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 	vq_callback_t **callbacks;
 	const char **names;
 	int err;
-  uint32_t num_vqs, num_cpus;
+  uint32_t num_vqs;
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+  uint32_t num_cpus;
+  #endif
 
   // we assume no cpu hotplug...
-  num_cpus = num_online_cpus();
-  num_vqs = VIRTIO_LLFREE_BALLOON_VQ_MAX + num_cpus; 
+  num_vqs = VIRTIO_LLFREE_BALLOON_VQ_MAX;
 
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+  if(virtio_has_feature(vb->vdev, VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE)) {
+    num_cpus = num_online_cpus();
+    num_vqs = VIRTIO_LLFREE_BALLOON_VQ_MAX + num_cpus; 
+  } 
+  #endif
+  
   vqs = kzalloc((num_vqs * sizeof(struct virtqueue *)), GFP_KERNEL);
   callbacks = kzalloc(num_vqs * (sizeof(vq_callback_t *)), GFP_KERNEL);
   names = kzalloc((num_vqs * sizeof(char *)), GFP_KERNEL);
-
 
 	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = virtio_llfree_callback;
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ] = "llfree info";
 	callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = balloon_ack;
 	names[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ] = "llfree requests";
 
-  for(uint32_t i = 0; i < num_cpus; i++) {
-    callbacks[VIRTIO_LLFREE_BALLOON_VQ_MAX + i] = balloon_ack;
-    names[VIRTIO_LLFREE_BALLOON_VQ_MAX + i] = "llfree auto-deflate vq";
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+  if(virtio_has_feature(vb->vdev, VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE)) {
+    for(uint32_t i = 0; i < num_cpus; i++) {
+      callbacks[VIRTIO_LLFREE_BALLOON_VQ_MAX + i] = balloon_ack;
+      names[VIRTIO_LLFREE_BALLOON_VQ_MAX + i] = "llfree auto-deflate vq";
+    }
   }
-
-	// callbacks[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = balloon_ack;
-	// names[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ] = "llfree auto-deflate";
+  #endif
 
 	err = virtio_find_vqs(vb->vdev, num_vqs, vqs,
 			      callbacks, names, NULL);
@@ -277,10 +288,13 @@ static int init_vqs(struct virtio_llfree_balloon *vb)
 	vb->llfree_info_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ];
 	vb->llfree_request_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_REQUEST_VQ];
 
-  for(uint32_t i = 0; i < num_cpus; i++) {
-    vb->llfree_auto_deflate_vqs[i] = vqs[VIRTIO_LLFREE_BALLOON_VQ_MAX + i];
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+  if(virtio_has_feature(vb->vdev, VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE)) {
+    for(uint32_t i = 0; i < num_cpus; i++) {
+      vb->llfree_auto_deflate_vqs[i] = vqs[VIRTIO_LLFREE_BALLOON_VQ_MAX + i];
+    }
   }
-	// vb->llfree_auto_deflate_vq = vqs[VIRTIO_LLFREE_BALLOON_LLFREE_AUTO_DEFLATE_VQ];
+  #endif
 
 	return 0;
 }
@@ -320,13 +334,17 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 
 	vb->vdev = vdev;
 
-  num_cores = num_online_cpus();
-  vb->auto_deflate_info = kzalloc(sizeof(AutoDeflateInfo *) * num_cores, GFP_KERNEL);
-  vb->llfree_auto_deflate_vqs = kzalloc(sizeof(struct virtqueue *) * num_cores, GFP_KERNEL);
-	if (!vb->llfree_auto_deflate_vqs) {
-		err = -ENOMEM;
-		goto out;
-	}
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+  if(virtio_has_feature(vdev, VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE)) {
+    num_cores = num_online_cpus();
+    vb->auto_deflate_info = kzalloc(sizeof(AutoDeflateInfo *) * num_cores, GFP_KERNEL);
+    vb->llfree_auto_deflate_vqs = kzalloc(sizeof(struct virtqueue *) * num_cores, GFP_KERNEL);
+    if (!vb->llfree_auto_deflate_vqs) {
+      err = -ENOMEM;
+      goto out;
+    }
+  }
+  #endif
 
 	err = init_vqs(vb);
 	if (err)
@@ -354,7 +372,11 @@ static void remove_common(struct virtio_llfree_balloon *vb)
 static void virtio_llfree_remove(struct virtio_device *vdev)
 {
 	struct virtio_llfree_balloon *vb = vdev->priv;
-  kfree(vb->llfree_auto_deflate_vqs);
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+  if(virtio_has_feature(vdev, VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE)) {
+    kfree(vb->llfree_auto_deflate_vqs);
+  }
+  #endif
   kfree(vb->auto_deflate_info);
 	kfree(vb->vq_buffer.buf);
 	remove_common(vb);

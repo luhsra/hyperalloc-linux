@@ -874,7 +874,7 @@ struct zone {
 	atomic_long_t		vm_stat[NR_VM_ZONE_STAT_ITEMS];
 	atomic_long_t		vm_numa_event[NR_VM_NUMA_EVENT_ITEMS];
 
-	#ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+	#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
 	atomic_long_t vm_stat_llfree_huge_pages;
   struct mutex auto_deflate_lock;
 	#endif
@@ -1309,7 +1309,7 @@ static inline bool zone_is_zone_device(struct zone *zone)
 }
 #endif
 
-#ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
 static inline int32_t zone_get_type(struct zone *zone) {
 	struct pglist_data *node;
 	node = zone->zone_pgdat;	

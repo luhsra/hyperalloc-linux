@@ -4123,7 +4123,7 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 
 	cpu = get_cpu();
 
-  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
 	for(uint32_t i = 0; i < 2; i++) {
 		res = llfree_get(zone->llfree, cpu, llf);
 
@@ -8074,7 +8074,7 @@ static void __meminit zone_init_internals(struct zone *zone, enum zone_type idx,
 	zone->zone_pgdat = NODE_DATA(nid);
 	spin_lock_init(&zone->lock);
 	zone_seqlock_init(zone);
-  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON
+  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
   mutex_init(&zone->auto_deflate_lock);
   #endif
 	zone_pcp_init(zone);
