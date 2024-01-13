@@ -32,7 +32,8 @@
 
 /* The feature bitmap for virtio llfree balloon */
 #define VIRTIO_LLFREE_BALLOON_F_DEMAND_SHRINK_PAGECACHE 1
-#define VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE 2
+#define VIRTIO_LLFREE_BALLOON_F_AUTO_MODE 2 
+#define VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE 3
 
 struct virtio_llfree_balloon_config {
 	/* Number of pages host wants Guest to shrink the pagecache. */
