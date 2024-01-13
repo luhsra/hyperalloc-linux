@@ -30,6 +30,9 @@
 #include "linux/virtio_ids.h"
 #include "linux/virtio_config.h"
 
+/* The feature bitmap for virtio llfree balloon */
+#define VIRTIO_LLFREE_BALLOON_F_DEMAND_SHRINK_PAGECACHE 1
+
 struct virtio_llfree_balloon_config {
 	/* Number of pages host wants Guest to shrink the pagecache. */
 	__le32 shrink_pagecache_num_pages;

@@ -1,15 +1,8 @@
-#include "asm/io.h"
-#include "asm/numa.h"
-#include "asm/stat.h"
 #include "linux/cpumask.h"
 #include "linux/gfp_types.h"
 #include "linux/mmzone.h"
-#include "linux/numa.h"
-#include "linux/smp.h"
-#include "linux/topology.h"
 #include "linux/types.h"
 #include "linux/virtio_config.h"
-#include "linux/virtio_types.h"
 #include "llfree.h"
 #include <linux/virtio.h>
 #include <linux/virtio_llfree_balloon.h>
@@ -24,11 +17,9 @@
 #include <linux/mm.h>
 #include <linux/page_reporting.h>
 
-#include "llfree_alloc.h"
 #include "llfree_qemu.h"
-#include "llfree_qemu_test.h"
 
-extern uint32_t shrink_pagecache_for_reclaim(uint32_t nr_to_reclaim, uint32_t num_numa_node);
+extern uint32_t shrink_pagecache_for_reclaim(uint32_t num_numa_node, uint32_t nr_to_reclaim);
 
 enum virtio_llfree_balloon_vq {
 	VIRTIO_LLFREE_BALLOON_LLFREE_INFO_VQ,
@@ -198,7 +189,7 @@ static void shrink_pagecache_func(struct work_struct *work) {
 		virtio_cread_le(vb->vdev, struct virtio_llfree_balloon_config, 
 		                num_numa_node, &num_numa_node);
 
-		reclaimed_nr_pages = shrink_pagecache_for_reclaim(shrink_pagecache_num_pages, num_numa_node);
+		reclaimed_nr_pages = shrink_pagecache_for_reclaim(num_numa_node, shrink_pagecache_num_pages);
 
 		shrink_pagecache_num_pages = 0;
 		virtio_cwrite_le(vb->vdev, struct virtio_llfree_balloon_config, 
@@ -209,16 +200,19 @@ static void shrink_pagecache_func(struct work_struct *work) {
 
 static void virtio_llfree_config_changed(struct virtio_device *vdev) {
 		struct virtio_llfree_balloon *vb;
+		uint32_t shrink_pagecache_num_pages;
+
 		vb = (struct virtio_llfree_balloon *) vdev->priv;
 
 		// dispatch
-		uint32_t shrink_pagecache_num_pages;
-		virtio_cread_le(vdev, struct virtio_llfree_balloon_config, 
-		                shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
+    if(virtio_has_feature(vdev, VIRTIO_LLFREE_BALLOON_F_DEMAND_SHRINK_PAGECACHE)) {
+      virtio_cread_le(vdev, struct virtio_llfree_balloon_config, 
+                      shrink_pagecache_num_pages, &shrink_pagecache_num_pages);
 
-		if(shrink_pagecache_num_pages > 0) {
-				queue_work(system_freezable_wq, &vb->shrink_pagecache_work);
-		}
+      if(shrink_pagecache_num_pages > 0) {
+          queue_work(system_freezable_wq, &vb->shrink_pagecache_work);
+      }
+    }
 }
 
 // IDs can't be arbitrarily chosen, for now
@@ -302,9 +296,11 @@ static int virtio_llfree_balloon_probe(struct virtio_device *vdev)
 		goto out;
 	}
 
-	INIT_WORK(&vb->shrink_pagecache_work, shrink_pagecache_func);
-	virtio_llfree_init_map_zone_types((enum llfree_zone_type *) &vb->map_zone_type);
+  if(virtio_has_feature(vdev, VIRTIO_LLFREE_BALLOON_F_DEMAND_SHRINK_PAGECACHE)) {
+    INIT_WORK(&vb->shrink_pagecache_work, shrink_pagecache_func);
+  }
 
+	virtio_llfree_init_map_zone_types((enum llfree_zone_type *) &vb->map_zone_type);
 	init_waitqueue_head(&vb->acked);
 	
 	llfree_create_buffer(&vb->vq_buffer.buf, &vb->vq_buffer.len);
@@ -357,6 +353,7 @@ static void virtio_llfree_remove(struct virtio_device *vdev)
 }
 
 static unsigned int features[] = {
+  VIRTIO_LLFREE_BALLOON_F_DEMAND_SHRINK_PAGECACHE,
 };
 
 static struct virtio_driver virtio_llfree_balloon_driver = {

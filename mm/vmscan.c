@@ -7480,7 +7480,7 @@ unsigned long shrink_all_memory(unsigned long nr_to_reclaim)
 #endif /* CONFIG_HIBERNATION */
 
 #ifdef CONFIG_VIRTIO_LLFREE_BALLOON
-unsigned long shrink_pagecache_for_reclaim(uint32_t numa_node_id, uint32_t nr_to_reclaim)
+unsigned long shrink_pagecache_for_reclaim(uint32_t num_numa_node, uint32_t nr_to_reclaim)
 {
 	struct scan_control sc = {
 		.nr_to_reclaim = nr_to_reclaim,
@@ -7492,7 +7492,7 @@ unsigned long shrink_pagecache_for_reclaim(uint32_t numa_node_id, uint32_t nr_to
 		.may_swap = 1,
 		// .hibernation_mode = 1,
 	};
-	struct zonelist *zonelist = node_zonelist(sc.gfp_mask, numa_node_id);
+	struct zonelist *zonelist = node_zonelist(num_numa_node, sc.gfp_mask);
 	unsigned long nr_reclaimed;
 	unsigned int noreclaim_flag;
 
