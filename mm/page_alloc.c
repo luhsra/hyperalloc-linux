@@ -4123,23 +4123,24 @@ static inline struct page *rmqueue(struct zone *preferred_zone,
 
 	cpu = get_cpu();
 
-  #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
-	for(uint32_t i = 0; i < 2; i++) {
-		res = llfree_get(zone->llfree, cpu, llf);
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+	res = llfree_get(zone->llfree, cpu, llf);
 
-		if((res.val == LLFREE_ERR_MEMORY) && (atomic_long_read(&zone->vm_stat_llfree_huge_pages) > 0)) {
-      virtio_llfree_auto_deflate(zone);
-			continue;
-		}
-		break;
+	// check again due to huge page fragmentation...
+	if ((res.val == LLFREE_ERR_MEMORY) &&
+	    (atomic_long_read(&zone->vm_stat_llfree_huge_pages) > 0)) {
+		virtio_llfree_auto_deflate(zone);
+		res = llfree_get(zone->llfree, cpu, llf);
 	}
-  #else
-	res = llfree_get(zone->llfree, cpu, order);
-  #endif
+#else
+	res = llfree_get(zone->llfree, cpu, llf);
+#endif
 
 	if (!llfree_ok(res)) {
 		put_cpu();
 		pr_err("llfree thread %u: error %lld", current->pid, res.val);
+		pr_err("nr_free_pages left in zone: %li",
+		       atomic_long_read(&zone->vm_stat[NR_FREE_PAGES]));
 		BUG_ON(res.val != LLFREE_ERR_MEMORY);
 	} else {
 		size_t offset;
@@ -4546,10 +4547,19 @@ retry:
 			}
 		}
 
+#ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
+		// this check is for 4KiB pages
+		mark = high_wmark_pages(zone);
+		if (!zone_watermark_ok(zone, order, mark, ac->highest_zoneidx,
+				       alloc_flags) &&
+		    (atomic_long_read(&zone->vm_stat_llfree_huge_pages) > 0)) {
+			virtio_llfree_auto_deflate(zone);
+		}
+#endif
+
 		mark = wmark_pages(zone, alloc_flags & ALLOC_WMARK_MASK);
-		if (!zone_watermark_fast(zone, order, mark,
-				       ac->highest_zoneidx, alloc_flags,
-				       gfp_mask)) {
+		if (!zone_watermark_fast(zone, order, mark, ac->highest_zoneidx,
+					 alloc_flags, gfp_mask)) {
 			int ret;
 
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
