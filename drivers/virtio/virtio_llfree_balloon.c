@@ -143,40 +143,59 @@ static void noinline virtio_llfree_send_request(struct virtio_llfree_balloon *vb
 #endif
 
 #ifdef CONFIG_VIRTIO_LLFREE_BALLOON_AUTO_DEFLATE
-void noinline virtio_llfree_auto_deflate(struct zone *zone) {
+void noinline virtio_llfree_auto_deflate(struct zone *zone)
+{
 	struct scatterlist sg;
-	uint32_t len, core, num_cores;
-  uint32_t numa_node_id, zone_type;
+	uint32_t core, num_cores;
+	uint32_t len;
+	uint32_t numa_node_id, zone_type;
+	unsigned long flags;
 
-  zone_type = zone_get_type(zone);
+	// only auto deflate if virtio device supports it
+	if (!virtio_has_feature(vb_llfree->vdev,
+				VIRTIO_LLFREE_BALLOON_F_AUTO_DEFLATE)) {
+		return;
+	}
 
-  if(zone_type == -1) {
-    printk("llfree_balloon: could not find zone_type!\n");
-    return;
-  }
+	zone_type = zone_get_type(zone);
 
-  numa_node_id = zone->node;
+	if (zone_type == -1) {
+		printk("llfree_balloon: could not find zone_type!\n");
+		return;
+	}
 
-  // are core ids alway(or at least normally) continuous?
-  num_cores = num_online_cpus();
-  core = raw_smp_processor_id();
+	spin_lock_irqsave(&zone->auto_deflate_lock, flags);
+	// are core ids alway(or at least normally) continuous?
+	num_cores = num_online_cpus();
+	numa_node_id = zone->node;
+	core = raw_smp_processor_id();
 
-  if(core > num_cores){
-    printk("llfree_balloon: core > num_cores!\n");
-    return;
-  }
+	if (core > num_cores) {
+		printk("llfree_balloon: core > num_cores!\n");
+		return;
+	}
 
-  mutex_lock(&zone->auto_deflate_lock);
-  
-  printk("auto-deflate: core %u zone %u\n", core, zone_type);
+	printk("auto-deflate: core %u zone %u threadid %u\n", core, zone_type,
+	       current->pid);
 	vb_llfree->auto_deflate_info[core].numa_node_id = numa_node_id;
-	vb_llfree->auto_deflate_info[core].zone_type = vb_llfree->map_zone_type[zone_type];
-	sg_init_one(&sg, &vb_llfree->auto_deflate_info[core], sizeof(AutoDeflateInfo));
-	virtqueue_add_outbuf(vb_llfree->llfree_auto_deflate_vqs[core], &sg, 1, vb_llfree, GFP_KERNEL);
-	virtqueue_kick(vb_llfree->llfree_auto_deflate_vqs[core]);
-	wait_event(vb_llfree->acked, virtqueue_get_buf(vb_llfree->llfree_auto_deflate_vqs[core], &len));	
+	vb_llfree->auto_deflate_info[core].zone_type =
+		vb_llfree->map_zone_type[zone_type];
 
-  mutex_unlock(&zone->auto_deflate_lock);
+	// send information
+	sg_init_one(&sg, &vb_llfree->auto_deflate_info[core],
+		    sizeof(AutoDeflateInfo));
+	virtqueue_add_outbuf(vb_llfree->llfree_auto_deflate_vqs[core], &sg, 1,
+			     vb_llfree, GFP_KERNEL);
+	virtqueue_kick(vb_llfree->llfree_auto_deflate_vqs[core]);
+
+	// busy wait for virtio device
+	// we can't sleep in this context
+	while (!virtqueue_get_buf(vb_llfree->llfree_auto_deflate_vqs[core],
+				  &len) &&
+	       !virtqueue_is_broken(vb_llfree->llfree_auto_deflate_vqs[core]))
+		cpu_relax();
+
+	spin_unlock_irqrestore(&zone->auto_deflate_lock, flags);
 }
 EXPORT_SYMBOL(virtio_llfree_auto_deflate);
 #endif
