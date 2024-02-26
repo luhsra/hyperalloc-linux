@@ -2168,7 +2168,6 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 	struct page *page;
 	u64 error_code;
 	int idx, ret = 0;
-	bool added = false;
 
 	if (!atomic_read(&kvm->online_vcpus))
 		return -EINVAL;
@@ -2188,8 +2187,6 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 
 	printk(KERN_WARNING "KVM Mapping %x num pages\n", map_region->nr_pages);
 
-	// u64 spte;
-	// pte_t *mmu_pte;
 	while (map_region->nr_pages) {
 		if (signal_pending(current)) {
 			ret = -ERESTARTSYS;
@@ -2202,15 +2199,6 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 		/* Pin the source page. */
 		ret = get_user_pages_fast(map_region->source_addr, 1, 0, &page);
 
-		// kvm_tdp_mmu_fast_pf_get_last_sptep(vcpu, map_region->gpa,
-		// 				   &spte);
-		// mmu_pte = virt_to_pte(current->mm, map_region->source_addr);
-		// printk(KERN_WARNING "spte before map: \t %lx", spte);
-		// if (!mmu_pte) {
-		// 	printk(KERN_WARNING "pte before map: \t %p", mmu_pte);
-		// } else {
-		// 	printk(KERN_WARNING "pte before map: \t %p", *mmu_pte);
-		// }
 		if (ret < 0) {
       printk(KERN_WARNING "kvm map ioctl: could NOT pin page");
 			break;
@@ -2226,16 +2214,6 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 		ret = kvm_mmu_map_page(vcpu, map_region->gpa, error_code,
 				       PG_LEVEL_4K);
 
-		kvm_tdp_mmu_fast_pf_get_last_sptep(vcpu, map_region->gpa,
-						   &spte);
-		mmu_pte = virt_to_pte(current->mm, map_region->source_addr);
-		// printk(KERN_WARNING "spte after map: \t %lx", spte);
-		// if (!mmu_pte) {
-		// 	printk(KERN_WARNING "pte after map: \t %p", mmu_pte);
-		// } else {
-		// 	printk(KERN_WARNING "pte after map: \t %p", *mmu_pte);
-		// }
-
 		put_page(page);
 		if (ret)
 			break;
@@ -2243,7 +2221,6 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 		map_region->source_addr += PAGE_SIZE;
 		map_region->gpa += PAGE_SIZE;
 		map_region->nr_pages--;
-		added = true;
 	}
 
 	srcu_read_unlock(&vcpu->kvm->srcu, idx);
