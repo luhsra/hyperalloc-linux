@@ -162,6 +162,8 @@ EXPORT_SYMBOL_GPL(kvm_rebooting);
 
 #define KVM_EVENT_CREATE_VM 0
 #define KVM_EVENT_DESTROY_VM 1
+#define KVM_MAP_RETRIES 3
+
 static void kvm_uevent_notify_change(unsigned int type, struct kvm *kvm);
 static unsigned long long kvm_createvm_count;
 static unsigned long long kvm_active_vms;
@@ -2150,7 +2152,6 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 	struct kvm_vcpu *vcpu;
 	u64 error_code;
 	u64 nr_pages_iter;
-	u64 source_addr_iter;
 	u64 gpa_iter;
 	u32 goal_level;
 	int idx, ret;
@@ -2173,7 +2174,6 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 
 	nr_pages_iter = map_region->nr_pages;
 	gpa_iter = map_region->gpa;
-	source_addr_iter = map_region->source_addr;
 	while (nr_pages_iter) {
 		if (signal_pending(current)) {
 			ret = -ERESTARTSYS;
@@ -2186,7 +2186,7 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 		/* TODO: large page support. */
 		error_code = PFERR_WRITE_MASK;
 
-		for (uint32_t i = 0; i < 3; i++) {
+		for (uint32_t i = 0; i < KVM_MAP_RETRIES; i++) {
 			ret = kvm_mmu_map_page(vcpu, gpa_iter, error_code,
 					       PG_LEVEL_2M, &goal_level);
 			if (ret != -EAGAIN) {
@@ -2200,11 +2200,9 @@ static int kvm_vm_ioctl_map_memory_region(struct kvm *kvm,
 			break;
 		}
 
-		source_addr_iter += KVM_HPAGE_SIZE(goal_level);
 		gpa_iter += KVM_HPAGE_SIZE(goal_level);
 		nr_pages_iter -= KVM_PAGES_PER_HPAGE(goal_level);
-
-}
+	}
 
 	srcu_read_unlock(&vcpu->kvm->srcu, idx);
 
