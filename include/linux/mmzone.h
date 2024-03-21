@@ -2,7 +2,6 @@
 #ifndef _LINUX_MMZONE_H
 #define _LINUX_MMZONE_H
 
-#include "linux/mutex.h"
 #ifndef __ASSEMBLY__
 #ifndef __GENERATING_BOUNDS_H
 
@@ -12,6 +11,7 @@
 #include <linux/bitops.h>
 #include <linux/cache.h>
 #include <linux/threads.h>
+#include <linux/mutex.h>
 #include <linux/numa.h>
 #include <linux/init.h>
 #include <linux/seqlock.h>
